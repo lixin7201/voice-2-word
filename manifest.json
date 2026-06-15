@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Audio Insight 录音转写总结(Aliyun + Minimax)",
+  "version": "1.0",
+  "description": "右键点击网页音频侧边栏实时提取文字，并借助 MiniMax LLM 生成超强智能总结。",
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  },
+  "permissions": [
+    "contextMenus",
+    "sidePanel",
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "action": {
+    "default_title": "Audio Insight 配置与使用说明"
+  }
+}
