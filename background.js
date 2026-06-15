@@ -29,6 +29,9 @@ function setupContextMenu() {
 
 chrome.runtime.onInstalled.addListener(() => {
   setupContextMenu();
+  if (chrome.sidePanel.setPanelBehavior) {
+    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  }
   chrome.storage.local.get(['apiBaseUrl'], (res) => {
     if (!res.apiBaseUrl) {
       chrome.storage.local.set({ apiBaseUrl: DEFAULT_API_BASE_URL });
@@ -40,7 +43,7 @@ chrome.runtime.onStartup.addListener(setupContextMenu);
 
 chrome.action.onClicked.addListener((tab) => {
   if (tab?.windowId) {
-    chrome.sidePanel.open({ windowId: tab.windowId }).catch(() => {
+    Promise.resolve(chrome.sidePanel.open({ windowId: tab.windowId })).catch(() => {
       chrome.runtime.openOptionsPage();
     });
   } else {
@@ -73,7 +76,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== 'dayibin_scan_audio' || !tab?.id) return;
-  chrome.sidePanel.open({ windowId: tab.windowId }).finally(() => {
+  Promise.resolve(chrome.sidePanel.open({ windowId: tab.windowId })).finally(() => {
     scanTab(tab);
   });
 });

@@ -4,66 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <link rel="stylesheet" href="sidepanel.css">
-  <title>Audio Insight</title>
+  <title>大宜宾录音助手</title>
 </head>
 <body>
-  <div class="header" style="display: flex; justify-content: space-between; align-items: flex-start;">
-    <div>
-      <div class="logo-area">
-        <span class="icon">✨</span>
-        <h2>Audio Insight</h2>
-      </div>
-      <p class="subtitle">为您提炼语音里的每一分价值</p>
-    </div>
-    <button id="settings-btn" class="icon-btn" style="font-size: 18px;" title="API 密钥配置">⚙️</button>
-  </div>
-
-  <!-- 初始化与进度提示区 -->
-  <div id="status-container" class="status-container">
-    <div class="loader hidden" id="loader"></div>
-    <span id="status-text" class="hidden">等待开始...</span>
-    <button id="scan-btn" class="primary-btn" style="padding: 8px 16px;">🔍 扫描此网页里的录音</button>
-  </div>
-
-  <div id="confirm-box" class="confirm-box hidden">
-    <button id="execute-btn" class="primary-btn" style="background-color: #10b981;">✅ 确定消耗额度执行转写</button>
-  </div>
-
-  <!-- 错误提示区 -->
-  <div id="error-box" class="error-box hidden">
-    <span class="error-icon">⚠️</span>
-    <span id="error-text"></span>
-  </div>
-
-  <!-- AI 总结展示区 -->
-  <div id="summary-section" class="card hidden">
-    <div class="card-header primary">
-      <h3>🧠 AI 总结提要</h3>
-      <button class="icon-btn copy-btn" data-target="summary-content" title="复制内容">
-        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-      </button>
-    </div>
-    <div id="summary-content" class="card-body formatted-text text-skeleton">
-      <!-- 总结内容将在这里展示 -->
-    </div>
-  </div>
-
-  <!-- 原文字稿展示区 -->
-  <div id="transcript-section" class="card hidden">
-    <div class="card-header secondary" id="transcript-toggle">
-      <h3>📄 完整转写字稿</h3>
-      <div class="card-actions">
-        <button class="icon-btn copy-btn" data-target="transcript-content" title="复制内容">
-            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-        </button>
-        <span class="chevron" id="chevron">▼</span>
-      </div>
-    </div>
-    <div id="transcript-content" class="card-body raw-text collapsed">
-      <!-- 转写原稿内容将在这里展示 -->
-    </div>
-  </div>
-
+  <main id="app" class="app-shell"></main>
   <script src="sidepanel.js"></script>
 </body>
 </html>

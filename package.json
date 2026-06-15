@@ -1,0 +1,15 @@
+{
+  "name": "voice-2-word",
+  "version": "0.1.0",
+  "private": true,
+  "description": "大宜宾录音助手 Chrome 扩展和局域网后端",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "node server/index.js",
+    "test": "node --test server/**/*.test.js",
+    "check": "node --check server/index.js && node --check server/app.js && node --check server/lib/*.js && node --check background.js && node --check sidepanel.js && node --check options.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

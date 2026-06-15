@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Audio Insight 录音转写总结(Aliyun + Minimax)",
-  "version": "1.0",
-  "description": "右键点击网页音频侧边栏实时提取文字，并借助 MiniMax LLM 生成超强智能总结。",
+  "name": "大宜宾录音助手",
+  "version": "0.1.0",
+  "description": "大宜宾内部录音捕获、转写、总结、跟单和历史管理工具。",
   "icons": {
     "16": "icon.png",
     "48": "icon.png",
@@ -13,9 +13,15 @@
     "sidePanel",
     "storage",
     "activeTab",
-    "scripting"
+    "scripting",
+    "tabs",
+    "downloads",
+    "webRequest"
   ],
   "host_permissions": [
+    "http://lixindemac-studio.local:8127/*",
+    "http://localhost:8127/*",
+    "http://127.0.0.1:8127/*",
     "http://*/*",
     "https://*/*"
   ],
@@ -30,6 +36,6 @@
     "open_in_tab": true
   },
   "action": {
-    "default_title": "Audio Insight 配置与使用说明"
+    "default_title": "大宜宾录音助手"
   }
 }
