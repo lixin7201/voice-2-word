@@ -119,6 +119,16 @@ create table if not exists export_files (
   created_at timestamptz not null default now()
 );
 
+create table if not exists system_settings (
+  id uuid primary key default gen_random_uuid(),
+  key text not null unique,
+  value text,
+  is_secret boolean not null default false,
+  updated_by uuid references employees(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists audit_logs (
   id uuid primary key default gen_random_uuid(),
   actor_employee_id uuid references employees(id),
@@ -143,3 +153,4 @@ create index if not exists idx_audio_records_owner on audio_records(owner_employ
 create index if not exists idx_audio_records_department on audio_records(owner_department_id);
 create index if not exists idx_audio_records_status on audio_records(status);
 create index if not exists idx_audio_records_created_at on audio_records(created_at);
+create index if not exists idx_system_settings_key on system_settings(key);

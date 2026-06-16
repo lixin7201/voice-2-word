@@ -113,7 +113,7 @@ button {
 
 .nav {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
   gap: 6px;
   margin-bottom: 12px;
 }
@@ -179,6 +179,24 @@ button {
   font-weight: 600;
 }
 
+.advanced-service {
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--line);
+}
+
+.advanced-service summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.advanced-service .field {
+  margin-top: 8px;
+}
+
 input,
 select,
 textarea {
@@ -190,6 +208,12 @@ textarea {
   color: var(--text);
   padding: 9px 10px;
   outline: none;
+}
+
+input[type="checkbox"] {
+  width: auto;
+  min-height: auto;
+  padding: 0;
 }
 
 textarea {
@@ -285,6 +309,29 @@ textarea:focus {
 .employee-list {
   display: grid;
   gap: 8px;
+}
+
+.settings-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.setting-group {
+  display: grid;
+  gap: 10px;
+  padding: 11px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.54);
+  border: 1px solid var(--line);
+}
+
+.inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .item {

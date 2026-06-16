@@ -229,3 +229,78 @@ test('admin can create, disable, enable, and reset employees', async () => {
     server.close();
   }
 });
+
+test('admin settings centrally configure backend secrets without exposing them', async () => {
+  const { server, baseUrl } = await startTestServer();
+  try {
+    const lixin = await login(baseUrl, '离心');
+    const lanlan = await login(baseUrl, '岚岚');
+
+    const forbidden = await request(baseUrl, '/api/admin/settings', {
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+    });
+    assert.equal(forbidden.response.status, 403);
+
+    const preflight = await fetch(`${baseUrl}/api/admin/settings`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'http://127.0.0.1:8132',
+        'Access-Control-Request-Method': 'PUT',
+        'Access-Control-Request-Headers': 'content-type,authorization',
+      },
+    });
+    assert.equal(preflight.status, 204);
+    assert.match(preflight.headers.get('access-control-allow-methods') || '', /\bPUT\b/);
+
+    const saved = await request(baseUrl, '/api/admin/settings', {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({
+        settings: {
+          devFakeAsr: '0',
+          dashscopeApiKey: 'dashscope-secret-key',
+          r2AccountId: 'account-id',
+          r2AccessKeyId: 'r2-access-key',
+          r2SecretAccessKey: 'r2-secret-key',
+          r2Bucket: 'voice-bucket',
+          easyAiApiKey: 'easyai-secret-key',
+        },
+      }),
+    });
+    assert.equal(saved.response.status, 200);
+    assert.equal(saved.body.status.dashscopeConfigured, true);
+    assert.equal(saved.body.status.r2Configured, true);
+    assert.equal(saved.body.status.llmConfigured, true);
+    assert.equal(saved.body.status.devFakeAsr, false);
+
+    const dashscopeField = saved.body.groups
+      .flatMap((group) => group.fields)
+      .find((field) => field.key === 'dashscopeApiKey');
+    assert.equal(dashscopeField.value, '');
+    assert.equal(dashscopeField.configured, true);
+    assert.equal(dashscopeField.maskedValue.includes('dashscope-secret-key'), false);
+
+    const health = await request(baseUrl, '/health');
+    assert.equal(health.body.dashscopeConfigured, true);
+    assert.equal(health.body.r2Configured, true);
+    assert.equal(health.body.llmConfigured, true);
+    assert.equal(health.body.devFakeAsr, false);
+
+    const preserved = await request(baseUrl, '/api/admin/settings', {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({
+        settings: {
+          dashscopeApiKey: '',
+          easyAiApiKey: '',
+          publicBaseUrl: 'http://voice-server.local:8127',
+        },
+      }),
+    });
+    const preservedFields = preserved.body.groups.flatMap((group) => group.fields);
+    assert.equal(preservedFields.find((field) => field.key === 'dashscopeApiKey').configured, true);
+    assert.equal(preserved.body.status.publicBaseUrl, 'http://voice-server.local:8127');
+  } finally {
+    server.close();
+  }
+});

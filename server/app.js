@@ -9,6 +9,7 @@ const { isR2Configured, presignR2Url, putR2Object } = require('./lib/r2');
 const { isDashScopeConfigured, transcribeWithDashScope } = require('./lib/dashscope');
 const { generateSummary } = require('./lib/llm');
 const { buildExportText, createDocxBuffer, createPdfBuffer, stripMarkdown } = require('./lib/exporters');
+const { resolveRuntimeConfig, saveSystemSettings, serializeSystemSettings } = require('./lib/system-settings');
 
 const DEFAULT_DATA_FILE = path.join(process.cwd(), 'data', 'dev-db.json');
 const DEFAULT_UPLOAD_DIR = path.join(process.cwd(), 'uploads');
@@ -66,15 +67,17 @@ function createVoiceServer(options = {}) {
 async function routeRequest(req, res, store, config) {
   const url = new URL(req.url, 'http://localhost');
   const pathname = url.pathname;
+  const runtimeConfig = resolveRuntimeConfig(config, store);
 
   if (req.method === 'GET' && pathname === '/health') {
     sendJson(res, 200, {
       ok: true,
       service: 'voice-2-word',
       version: '0.1.0',
-      r2Configured: isR2Configured(config),
-      dashscopeConfigured: isDashScopeConfigured(config),
-      llmConfigured: Boolean(config.easyAiApiKey || config.kimiApiKey),
+      r2Configured: isR2Configured(runtimeConfig),
+      dashscopeConfigured: isDashScopeConfigured(runtimeConfig),
+      llmConfigured: Boolean(runtimeConfig.easyAiApiKey || runtimeConfig.kimiApiKey),
+      devFakeAsr: Boolean(runtimeConfig.devFakeAsr),
     });
     return;
   }
@@ -94,14 +97,14 @@ async function routeRequest(req, res, store, config) {
     addAudit(store, employee.id, 'login', 'employee', employee.id);
     const freshEmployee = store.findById('employees', employee.id);
     sendJson(res, 200, {
-      accessToken: signToken({ employeeId: employee.id }, config.jwtSecret),
-      refreshToken: signToken({ employeeId: employee.id, type: 'refresh' }, config.jwtSecret, 60 * 60 * 24 * 14),
+      accessToken: signToken({ employeeId: employee.id }, runtimeConfig.jwtSecret),
+      refreshToken: signToken({ employeeId: employee.id, type: 'refresh' }, runtimeConfig.jwtSecret, 60 * 60 * 24 * 14),
       employee: serializeEmployee(freshEmployee, store),
     });
     return;
   }
 
-  const auth = authenticate(req, store, config);
+  const auth = authenticate(req, store, runtimeConfig);
 
   if (req.method === 'GET' && pathname === '/api/me') {
     sendJson(res, 200, {
@@ -205,7 +208,7 @@ async function routeRequest(req, res, store, config) {
       error_message: '',
       source_media_url_hash: upload.fields.candidateUrl ? sha256(upload.fields.candidateUrl) : record.source_media_url_hash,
     });
-    await enqueueRecordProcessing(uploaded, store, config);
+    await enqueueRecordProcessing(uploaded, store, runtimeConfig);
     sendJson(res, 200, { record: serializeRecord(store.findById('audio_records', record.id), store) });
     return;
   }
@@ -234,7 +237,7 @@ async function routeRequest(req, res, store, config) {
       status: 'summarizing',
       error_message: '',
     });
-    await summarizeExistingRecord(updated, store, config);
+    await summarizeExistingRecord(updated, store, runtimeConfig);
     sendJson(res, 200, { record: serializeRecord(store.findById('audio_records', record.id), store) });
     return;
   }
@@ -243,7 +246,7 @@ async function routeRequest(req, res, store, config) {
   if (transcribeMatch && req.method === 'POST') {
     const record = requireRecord(transcribeMatch[1], store);
     ensureCanViewRecord(auth.employee, record, store);
-    await enqueueRecordProcessing(record, store, config);
+    await enqueueRecordProcessing(record, store, runtimeConfig);
     sendJson(res, 200, { record: serializeRecord(store.findById('audio_records', record.id), store) });
     return;
   }
@@ -274,13 +277,13 @@ async function routeRequest(req, res, store, config) {
     const record = requireRecord(exportMatch[1], store);
     ensureCanViewRecord(auth.employee, record, store);
     const body = await readJson(req);
-    const exportFile = await createExportFile(record, auth.employee, body, store, config);
+    const exportFile = await createExportFile(record, auth.employee, body, store, runtimeConfig);
     if (record.owner_employee_id !== auth.employee.id) {
       addAudit(store, auth.employee.id, 'export_other_record', 'audio_record', record.id, body);
     }
     sendJson(res, 200, {
       export: exportFile,
-      downloadUrl: `${config.publicBaseUrl}/api/export-files/${exportFile.id}/download`,
+      downloadUrl: `${runtimeConfig.publicBaseUrl}/api/export-files/${exportFile.id}/download`,
     });
     return;
   }
@@ -293,12 +296,12 @@ async function routeRequest(req, res, store, config) {
     ensureCanViewRecord(auth.employee, record, store);
     if (exportFile.storage === 'r2') {
       res.writeHead(302, {
-        Location: presignR2Url(config, { method: 'GET', key: exportFile.r2_key, expiresIn: 900 }),
+        Location: presignR2Url(runtimeConfig, { method: 'GET', key: exportFile.r2_key, expiresIn: 900 }),
       });
       res.end();
       return;
     }
-    const filePath = path.join(config.exportDir, exportFile.r2_key);
+    const filePath = path.join(runtimeConfig.exportDir, exportFile.r2_key);
     if (!fs.existsSync(filePath)) throw httpError(404, '导出文件不存在');
     res.writeHead(200, {
       'Content-Type': contentTypeForExport(exportFile.format),
@@ -312,6 +315,21 @@ async function routeRequest(req, res, store, config) {
     ensureCanManageEmployees(auth.employee);
     const employees = store.table('employees').map((employee) => serializeEmployee(employee, store));
     sendJson(res, 200, { employees });
+    return;
+  }
+
+  if (pathname === '/api/admin/settings' && req.method === 'GET') {
+    ensureCanManageSettings(auth.employee);
+    sendJson(res, 200, serializeSystemSettings(config, store));
+    return;
+  }
+
+  if (pathname === '/api/admin/settings' && ['POST', 'PUT', 'PATCH'].includes(req.method)) {
+    ensureCanManageSettings(auth.employee);
+    const body = await readJson(req);
+    saveSystemSettings(store, body, auth.employee.id);
+    addAudit(store, auth.employee.id, 'update_system_settings', 'system_settings', 'global');
+    sendJson(res, 200, serializeSystemSettings(config, store));
     return;
   }
 
@@ -460,6 +478,7 @@ function employeeDepartments(employeeId, store) {
 function permissionsFor(employee) {
   return {
     canManageEmployees: ['admin', 'boss'].includes(employee.global_role),
+    canManageSettings: ['admin', 'boss'].includes(employee.global_role),
     canViewAllRecords: ['admin', 'boss'].includes(employee.global_role),
     canViewDepartmentRecords: employee.global_role === 'department_lead',
   };
@@ -484,6 +503,10 @@ function ensureCanEditRecord(employee, record, store) {
 
 function ensureCanManageEmployees(employee) {
   if (!['admin', 'boss'].includes(employee.global_role)) throw httpError(403, '没有员工管理权限');
+}
+
+function ensureCanManageSettings(employee) {
+  if (!['admin', 'boss'].includes(employee.global_role)) throw httpError(403, '没有后台配置权限');
 }
 
 function pickOwnerDepartment(employee, store, requestedDepartmentId) {
@@ -846,7 +869,7 @@ function sendJson(res, status, payload) {
 
 function setCorsHeaders(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
 }
 

@@ -17,6 +17,8 @@ const appState = {
   candidates: [],
   departments: [],
   employees: [],
+  settingGroups: [],
+  systemStatus: null,
   busy: false,
 };
 
@@ -81,10 +83,13 @@ function renderLogin() {
       </div>
       ${renderStatus()}
       <form id="login-form" class="form">
-        <div class="field">
-          <label for="apiBaseUrl">后端地址</label>
-          <input id="apiBaseUrl" name="apiBaseUrl" value="${escapeHtml(appState.apiBaseUrl)}">
-        </div>
+        <details class="advanced-service">
+          <summary>服务地址（一般不用改）</summary>
+          <div class="field">
+            <label for="apiBaseUrl">后端地址</label>
+            <input id="apiBaseUrl" name="apiBaseUrl" value="${escapeHtml(appState.apiBaseUrl)}">
+          </div>
+        </details>
         <div class="grid-2">
           <div class="field">
             <label for="loginName">工号/花名</label>
@@ -126,6 +131,7 @@ function renderNav() {
     ['history', '历史'],
   ];
   if (appState.permissions.canManageEmployees) items.push(['employees', '员工']);
+  if (appState.permissions.canManageSettings) items.push(['settings', '配置']);
   return `
     <nav class="nav">
       ${items.map(([view, label]) => `
@@ -147,6 +153,7 @@ function renderCurrentView() {
   if (appState.view === 'history') return renderHistory();
   if (appState.view === 'detail') return renderDetail();
   if (appState.view === 'employees') return renderEmployees();
+  if (appState.view === 'settings') return renderSettings();
   return renderHome();
 }
 
@@ -444,6 +451,80 @@ function renderEmployees() {
   `;
 }
 
+function renderSettings() {
+  const status = appState.systemStatus || {};
+  return `
+    <section class="glass section stack">
+      <div class="item-title">
+        <h2>后台配置</h2>
+        <button class="btn" data-action="refresh-settings">刷新</button>
+      </div>
+      <div class="settings-status">
+        ${renderConfigBadge('R2 存储', status.r2Configured)}
+        ${renderConfigBadge('录音转文字', status.dashscopeConfigured)}
+        ${renderConfigBadge('总结模型', status.llmConfigured)}
+        ${renderConfigBadge('演示模式', status.devFakeAsr)}
+      </div>
+      <form id="settings-form" class="form">
+        ${(appState.settingGroups || []).map(renderSettingGroup).join('') || '<div class="empty">正在读取后台配置...</div>'}
+        <button class="btn primary" type="submit" ${appState.busy ? 'disabled' : ''}>保存后台配置</button>
+      </form>
+    </section>
+  `;
+}
+
+function renderConfigBadge(label, ok) {
+  return `<span class="badge ${ok ? 'completed' : 'failed'}">${escapeHtml(label)}：${ok ? '已配置' : '未配置'}</span>`;
+}
+
+function renderSettingGroup(group) {
+  return `
+    <div class="setting-group">
+      <div>
+        <h3>${escapeHtml(group.title)}</h3>
+        ${group.description ? `<div class="hint">${escapeHtml(group.description)}</div>` : ''}
+      </div>
+      ${(group.fields || []).map(renderSettingField).join('')}
+    </div>
+  `;
+}
+
+function renderSettingField(field) {
+  const id = `setting-${field.key}`;
+  const help = [
+    field.secret && field.configured ? `已保存：${field.maskedValue || '已配置'}` : '',
+    field.help || '',
+  ].filter(Boolean).join('；');
+  if (field.type === 'select') {
+    return `
+      <div class="field">
+        <label for="${escapeHtml(id)}">${escapeHtml(field.label)}</label>
+        <select id="${escapeHtml(id)}" data-setting-key="${escapeHtml(field.key)}">
+          ${(field.options || []).map((option) => `
+            <option value="${escapeHtml(option.value)}" ${String(field.value) === String(option.value) ? 'selected' : ''}>${escapeHtml(option.label)}</option>
+          `).join('')}
+        </select>
+        ${help ? `<div class="hint">${escapeHtml(help)}</div>` : ''}
+      </div>
+    `;
+  }
+  return `
+    <div class="field">
+      <label for="${escapeHtml(id)}">${escapeHtml(field.label)}</label>
+      <input
+        id="${escapeHtml(id)}"
+        data-setting-key="${escapeHtml(field.key)}"
+        data-secret="${field.secret ? '1' : '0'}"
+        type="${field.type === 'password' ? 'password' : field.type === 'number' ? 'number' : 'text'}"
+        value="${field.secret ? '' : escapeHtml(field.value || '')}"
+        placeholder="${field.secret && field.configured ? `已保存：${escapeHtml(field.maskedValue || '已配置')}` : ''}"
+      >
+      ${field.secret ? `<label class="inline-check"><input type="checkbox" data-clear-key="${escapeHtml(field.key)}"> 清空已保存密钥</label>` : ''}
+      ${help ? `<div class="hint">${escapeHtml(help)}</div>` : ''}
+    </div>
+  `;
+}
+
 function renderRecruitmentStageOptions(selected) {
   const stages = [
     ['initial_effective_followup', '初期有效跟进'],
@@ -509,6 +590,7 @@ function bindCommon() {
     button.addEventListener('click', async () => {
       appState.view = button.dataset.view;
       if (appState.view === 'employees') await loadEmployeesSafe();
+      if (appState.view === 'settings') await loadSettingsSafe();
       render();
     });
   });
@@ -573,6 +655,15 @@ function bindCurrentView() {
 
   document.querySelectorAll('[data-action="disable-employee"], [data-action="enable-employee"], [data-action="reset-password"]').forEach((button) => {
     button.addEventListener('click', () => employeeAction(button.dataset.id, button.dataset.action));
+  });
+
+  const settingsForm = document.getElementById('settings-form');
+  if (settingsForm) settingsForm.addEventListener('submit', saveSettings);
+
+  const refreshSettings = document.querySelector('[data-action="refresh-settings"]');
+  if (refreshSettings) refreshSettings.addEventListener('click', async () => {
+    await loadSettingsSafe();
+    render();
   });
 }
 
@@ -807,6 +898,38 @@ async function employeeAction(employeeId, action) {
   });
 }
 
+async function saveSettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const settings = {};
+  const clearKeys = [];
+
+  form.querySelectorAll('[data-setting-key]').forEach((field) => {
+    const key = field.dataset.settingKey;
+    const value = String(field.value || '').trim();
+    if (field.dataset.secret === '1') {
+      if (value) settings[key] = value;
+      return;
+    }
+    settings[key] = value;
+  });
+
+  form.querySelectorAll('[data-clear-key]:checked').forEach((field) => {
+    clearKeys.push(field.dataset.clearKey);
+    settings[field.dataset.clearKey] = '';
+  });
+
+  await runBusy(async () => {
+    const body = await api('/api/admin/settings', {
+      method: 'PUT',
+      body: { settings, clearKeys },
+    });
+    appState.settingGroups = body.groups || [];
+    appState.systemStatus = body.status || null;
+    setStatus('后台配置已保存，员工端无需填写这些密钥。', 'success');
+  });
+}
+
 async function loadMe() {
   const body = await api('/api/me');
   appState.currentUser = body.employee;
@@ -838,6 +961,17 @@ async function loadEmployees() {
 async function loadEmployeesSafe() {
   if (!appState.permissions.canManageEmployees) return;
   await runBusy(loadEmployees, false);
+}
+
+async function loadSettings() {
+  const body = await api('/api/admin/settings');
+  appState.settingGroups = body.groups || [];
+  appState.systemStatus = body.status || null;
+}
+
+async function loadSettingsSafe() {
+  if (!appState.permissions.canManageSettings) return;
+  await runBusy(loadSettings, false);
 }
 
 async function api(path, options = {}) {

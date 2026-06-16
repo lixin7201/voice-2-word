@@ -66,12 +66,12 @@
 <body>
   <div class="container">
     <h1>大宜宾录音助手设置</h1>
-    <p>插件只连接公司局域网后端，不在浏览器端保存模型或存储服务密钥。</p>
+    <p>一般不用修改。模型、转写和存储密钥由管理员在后台统一配置，不在浏览器端保存。</p>
     
     <div class="form-group">
       <label for="apiBaseUrl">后端服务地址</label>
       <input type="text" id="apiBaseUrl" placeholder="http://lixindemac-studio.local:8127">
-      <div class="hint">默认使用离心 Mac 上的局域网服务端口 8127</div>
+      <div class="hint">默认使用公司局域网服务端口 8127；只有后端服务器地址变化时才需要修改。</div>
     </div>
 
     <button id="saveBtn" class="btn">保存设置</button>

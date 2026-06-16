@@ -115,6 +115,7 @@ function createInitialData(now = new Date().toISOString()) {
     followup_forms: [],
     record_notes: [],
     export_files: [],
+    system_settings: [],
     audit_logs: [],
     ztools_daily_digest_queue: [],
   };
