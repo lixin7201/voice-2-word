@@ -1,4 +1,7 @@
+const { loadEnvFile } = require('./lib/env');
 const { createVoiceServer } = require('./app');
+
+loadEnvFile();
 
 const server = createVoiceServer();
 const port = Number(process.env.PORT || 8127);

@@ -113,6 +113,7 @@ create table if not exists export_files (
   audio_record_id uuid not null references audio_records(id),
   export_type text not null,
   format text not null,
+  storage text not null default 'local',
   r2_key text not null,
   created_by uuid not null references employees(id),
   created_at timestamptz not null default now()

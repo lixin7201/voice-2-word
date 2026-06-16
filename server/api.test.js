@@ -140,6 +140,19 @@ test('manual upload creates completed local-development record and export', asyn
     assert.equal(uploadBody.record.status, 'completed');
     assert.equal(uploadBody.record.followupForm.business_type, 'recruitment');
 
+    const edited = await request(baseUrl, `/api/records/${recordId}/followup`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({
+        stage: 'mid_late_effective_followup',
+        companyName: '测试企业',
+        suggestedTag: 'C 类，有需求',
+        followupMarkdown: '中后期有效跟进\n【情况】：客户询问会员套餐，需人工确认。',
+      }),
+    });
+    assert.equal(edited.response.status, 200);
+    assert.equal(edited.body.followupForm.manual_edited, true);
+
     const exported = await request(baseUrl, `/api/records/${recordId}/export`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${lanlan.accessToken}` },
@@ -147,6 +160,16 @@ test('manual upload creates completed local-development record and export', asyn
     });
     assert.equal(exported.response.status, 200);
     assert.ok(exported.body.downloadUrl.includes('/api/export-files/'));
+
+    for (const format of ['txt', 'docx', 'pdf']) {
+      const result = await request(baseUrl, `/api/records/${recordId}/export`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+        body: JSON.stringify({ target: 'full_record', format }),
+      });
+      assert.equal(result.response.status, 200);
+      assert.equal(result.body.export.format, format);
+    }
   } finally {
     server.close();
   }
@@ -156,6 +179,12 @@ test('admin can create, disable, enable, and reset employees', async () => {
   const { server, baseUrl } = await startTestServer();
   try {
     const lixin = await login(baseUrl, '离心');
+    const departments = await request(baseUrl, '/api/departments', {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    assert.equal(departments.response.status, 200);
+    assert.ok(departments.body.departments.some((item) => item.name === '招聘部'));
+
     const me = await request(baseUrl, '/api/me', {
       headers: { Authorization: `Bearer ${lixin.accessToken}` },
     });

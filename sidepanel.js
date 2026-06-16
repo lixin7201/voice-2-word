@@ -15,6 +15,7 @@ const appState = {
   detail: null,
   detailTab: 'summary',
   candidates: [],
+  departments: [],
   employees: [],
   busy: false,
 };
@@ -41,6 +42,7 @@ async function init() {
   if (appState.accessToken) {
     try {
       await loadMe();
+      await loadDepartments();
       await loadRecords();
       appState.view = 'home';
     } catch {
@@ -304,14 +306,55 @@ function renderDetail() {
 
 function renderDetailTab(record) {
   if (appState.detailTab === 'summary') {
-    return `<div class="markdown">${escapeHtml(record.summary?.summary_markdown || '暂无总结')}</div>`;
+    return `
+      <div class="btn-row" style="margin-bottom:10px">
+        <button class="btn" data-action="summarize-record">重新生成总结</button>
+      </div>
+      <div class="markdown">${escapeHtml(record.summary?.summary_markdown || '暂无总结')}</div>
+    `;
   }
   if (appState.detailTab === 'transcript') {
     const text = record.transcript?.corrected_text || record.transcript?.raw_text || '暂无逐字稿';
-    return `<div class="markdown">${escapeHtml(text)}</div>`;
+    return `
+      <div class="btn-row" style="margin-bottom:10px">
+        <button class="btn" data-action="transcribe-record">重新转写</button>
+      </div>
+      <div class="markdown">${escapeHtml(text)}</div>
+    `;
   }
   if (appState.detailTab === 'followup') {
-    return `<div class="markdown">${escapeHtml(record.followupForm?.followup_markdown || '暂无跟单记录')}</div>`;
+    const followup = record.followupForm || {};
+    return `
+      <form id="followup-form" class="form">
+        <div class="grid-2">
+          <div class="field">
+            <label for="followup-stage">阶段</label>
+            <select id="followup-stage" name="stage">
+              ${renderRecruitmentStageOptions(followup.stage || '')}
+            </select>
+          </div>
+          <div class="field">
+            <label for="suggestedTag">建议标签</label>
+            <input id="suggestedTag" name="suggestedTag" value="${escapeHtml(followup.suggested_tag || '')}">
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label for="companyName">企业/客户</label>
+            <input id="companyName" name="companyName" value="${escapeHtml(followup.company_name || followup.customer_name || '')}">
+          </div>
+          <div class="field">
+            <label for="statusLabel">状态</label>
+            <input id="statusLabel" name="statusLabel" value="${escapeHtml(followup.status_label || '')}">
+          </div>
+        </div>
+        <div class="field">
+          <label for="followupMarkdown">跟单内容</label>
+          <textarea id="followupMarkdown" name="followupMarkdown">${escapeHtml(followup.followup_markdown || '')}</textarea>
+        </div>
+        <button class="btn primary" type="submit">保存跟单修改</button>
+      </form>
+    `;
   }
   if (appState.detailTab === 'notes') {
     return `
@@ -336,8 +379,8 @@ function renderDetailTab(record) {
     <div class="btn-row">
       <button class="btn primary" data-action="export-record" data-target="full_record" data-format="md">导出 Markdown</button>
       <button class="btn" data-action="export-record" data-target="transcript" data-format="txt">导出 TXT</button>
-      <button class="btn" disabled>DOCX 预留</button>
-      <button class="btn" disabled>PDF 预留</button>
+      <button class="btn" data-action="export-record" data-target="full_record" data-format="docx">导出 DOCX</button>
+      <button class="btn" data-action="export-record" data-target="full_record" data-format="pdf">导出 PDF</button>
     </div>
   `;
 }
@@ -354,6 +397,21 @@ function renderEmployees() {
           <div class="field">
             <label for="displayName">花名</label>
             <input id="displayName" name="displayName">
+          </div>
+          <div class="field">
+            <label for="employeeNo">工号</label>
+            <input id="employeeNo" name="employeeNo" placeholder="可选">
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label for="departmentId">部门</label>
+            <select id="departmentId" name="departmentId">
+              <option value="">管理层/待分配</option>
+              ${appState.departments.map((department) => `
+                <option value="${escapeHtml(department.id)}">${escapeHtml(department.name)}</option>
+              `).join('')}
+            </select>
           </div>
           <div class="field">
             <label for="globalRole">角色</label>
@@ -384,6 +442,20 @@ function renderEmployees() {
       </div>
     </section>
   `;
+}
+
+function renderRecruitmentStageOptions(selected) {
+  const stages = [
+    ['initial_effective_followup', '初期有效跟进'],
+    ['mid_effective_followup', '中期有效跟进'],
+    ['no_hiring_followup', '暂不招人有效跟进'],
+    ['mid_late_effective_followup', '中后期有效跟进'],
+    ['late_effective_followup', '后期有效跟进'],
+  ];
+  return [
+    `<option value="">未判断/不适用</option>`,
+    ...stages.map(([value, label]) => `<option value="${value}" ${value === selected ? 'selected' : ''}>${label}</option>`),
+  ].join('');
 }
 
 function renderTemplateSelect(id, selected) {
@@ -424,6 +496,7 @@ function bindLogin() {
       appState.currentUser = body.employee;
       await storageSet({ accessToken: body.accessToken, currentUser: body.employee, apiBaseUrl: appState.apiBaseUrl });
       await loadMe();
+      await loadDepartments();
       await loadRecords();
       setStatus('登录成功', 'success');
       appState.view = 'home';
@@ -475,6 +548,15 @@ function bindCurrentView() {
 
   const noteForm = document.getElementById('note-form');
   if (noteForm) noteForm.addEventListener('submit', saveNote);
+
+  const followupForm = document.getElementById('followup-form');
+  if (followupForm) followupForm.addEventListener('submit', saveFollowup);
+
+  const summarize = document.querySelector('[data-action="summarize-record"]');
+  if (summarize) summarize.addEventListener('click', summarizeRecord);
+
+  const transcribe = document.querySelector('[data-action="transcribe-record"]');
+  if (transcribe) transcribe.addEventListener('click', transcribeRecord);
 
   document.querySelectorAll('[data-action="export-record"]').forEach((button) => {
     button.addEventListener('click', () => exportRecord(button.dataset.target, button.dataset.format));
@@ -619,6 +701,52 @@ async function saveNote(event) {
   });
 }
 
+async function saveFollowup(event) {
+  event.preventDefault();
+  if (!appState.detail) return;
+  const form = event.currentTarget;
+  await runBusy(async () => {
+    await api(`/api/records/${appState.detail.id}/followup`, {
+      method: 'PATCH',
+      body: {
+        stage: form.stage.value,
+        companyName: form.companyName.value.trim(),
+        statusLabel: form.statusLabel.value.trim(),
+        suggestedTag: form.suggestedTag.value.trim(),
+        followupMarkdown: form.followupMarkdown.value.trim(),
+      },
+    });
+    await openRecord(appState.detail.id);
+    appState.detailTab = 'followup';
+    setStatus('跟单已保存', 'success');
+  });
+}
+
+async function summarizeRecord() {
+  if (!appState.detail) return;
+  await runBusy(async () => {
+    await api(`/api/records/${appState.detail.id}/summarize`, {
+      method: 'POST',
+      body: { templateType: appState.detail.templateType, force: true },
+    });
+    await openRecord(appState.detail.id);
+    appState.detailTab = 'summary';
+    setStatus('总结已重新生成', 'success');
+  });
+}
+
+async function transcribeRecord() {
+  if (!appState.detail) return;
+  await runBusy(async () => {
+    await api(`/api/records/${appState.detail.id}/transcribe`, {
+      method: 'POST',
+      body: {},
+    });
+    await openRecord(appState.detail.id);
+    setStatus('已重新触发转写', 'success');
+  });
+}
+
 async function exportRecord(target, format) {
   if (!appState.detail) return;
   await runBusy(async () => {
@@ -653,8 +781,9 @@ async function createEmployee(event) {
       method: 'POST',
       body: {
         displayName: form.displayName.value.trim(),
+        employeeNo: form.employeeNo.value.trim(),
         globalRole: form.globalRole.value,
-        departmentIds: [],
+        departmentIds: form.departmentId.value ? [form.departmentId.value] : [],
       },
     });
     await loadEmployees();
@@ -685,6 +814,11 @@ async function loadMe() {
   appState.templates = body.templates || [];
   appState.defaultTemplate = body.defaultTemplate || 'meeting_minutes';
   await storageSet({ currentUser: body.employee });
+}
+
+async function loadDepartments() {
+  const body = await api('/api/departments');
+  appState.departments = body.departments || [];
 }
 
 async function loadRecords() {

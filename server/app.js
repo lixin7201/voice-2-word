@@ -5,6 +5,10 @@ const crypto = require('node:crypto');
 const { JsonStore } = require('./lib/store');
 const { hashPassword, signToken, verifyPassword, verifyToken } = require('./lib/auth');
 const { TEMPLATE_OPTIONS, buildLocalSummary, defaultTemplateForEmployee } = require('./lib/templates');
+const { isR2Configured, presignR2Url, putR2Object } = require('./lib/r2');
+const { isDashScopeConfigured, transcribeWithDashScope } = require('./lib/dashscope');
+const { generateSummary } = require('./lib/llm');
+const { buildExportText, createDocxBuffer, createPdfBuffer, stripMarkdown } = require('./lib/exporters');
 
 const DEFAULT_DATA_FILE = path.join(process.cwd(), 'data', 'dev-db.json');
 const DEFAULT_UPLOAD_DIR = path.join(process.cwd(), 'uploads');
@@ -20,6 +24,22 @@ function createVoiceServer(options = {}) {
     publicBaseUrl: options.publicBaseUrl || process.env.PUBLIC_BASE_URL || 'http://lixindemac-studio.local:8127',
     devFakeAsr: options.devFakeAsr ?? process.env.VOICE_TO_WORD_DEV_FAKE_ASR === '1',
     dashscopeApiKey: options.dashscopeApiKey ?? process.env.DASHSCOPE_API_KEY,
+    dashscopeBaseUrl: options.dashscopeBaseUrl || process.env.DASHSCOPE_BASE_URL,
+    dashscopeModel: options.dashscopeModel || process.env.DASHSCOPE_MODEL || 'fun-asr',
+    dashscopeVocabularyId: options.dashscopeVocabularyId || process.env.DASHSCOPE_VOCABULARY_ID,
+    dashscopePollIntervalMs: options.dashscopePollIntervalMs || process.env.DASHSCOPE_POLL_INTERVAL_MS,
+    dashscopeTimeoutMs: options.dashscopeTimeoutMs || process.env.DASHSCOPE_TIMEOUT_MS,
+    r2AccountId: options.r2AccountId || process.env.CLOUDFLARE_R2_ACCOUNT_ID,
+    r2AccessKeyId: options.r2AccessKeyId || process.env.CLOUDFLARE_R2_ACCESS_KEY_ID,
+    r2SecretAccessKey: options.r2SecretAccessKey || process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY,
+    r2Bucket: options.r2Bucket || process.env.CLOUDFLARE_R2_BUCKET,
+    r2Endpoint: options.r2Endpoint || process.env.CLOUDFLARE_R2_ENDPOINT,
+    easyAiBaseUrl: options.easyAiBaseUrl || process.env.EASYAI_BASE_URL || 'https://aisoeasy.cc',
+    easyAiApiKey: options.easyAiApiKey || process.env.EASYAI_API_KEY,
+    easyAiModel: options.easyAiModel || process.env.EASYAI_MODEL || 'gpt-5.5',
+    kimiBaseUrl: options.kimiBaseUrl || process.env.KIMI_BASE_URL || 'https://api.moonshot.cn',
+    kimiApiKey: options.kimiApiKey || process.env.KIMI_API_KEY,
+    kimiModel: options.kimiModel || process.env.KIMI_MODEL || 'kimi-k2.6',
   };
   const store = options.store || new JsonStore(config.dataFile);
   store.load();
@@ -52,6 +72,9 @@ async function routeRequest(req, res, store, config) {
       ok: true,
       service: 'voice-2-word',
       version: '0.1.0',
+      r2Configured: isR2Configured(config),
+      dashscopeConfigured: isDashScopeConfigured(config),
+      llmConfigured: Boolean(config.easyAiApiKey || config.kimiApiKey),
     });
     return;
   }
@@ -105,6 +128,11 @@ async function routeRequest(req, res, store, config) {
 
   if (req.method === 'GET' && pathname === '/api/templates') {
     sendJson(res, 200, { templates: TEMPLATE_OPTIONS });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/api/departments') {
+    sendJson(res, 200, { departments: store.table('departments') });
     return;
   }
 
@@ -177,7 +205,7 @@ async function routeRequest(req, res, store, config) {
       error_message: '',
       source_media_url_hash: upload.fields.candidateUrl ? sha256(upload.fields.candidateUrl) : record.source_media_url_hash,
     });
-    processUploadedRecord(uploaded, store, config);
+    await enqueueRecordProcessing(uploaded, store, config);
     sendJson(res, 200, { record: serializeRecord(store.findById('audio_records', record.id), store) });
     return;
   }
@@ -203,10 +231,10 @@ async function routeRequest(req, res, store, config) {
     const body = await readJson(req);
     const updated = store.update('audio_records', record.id, {
       template_type: body.templateType || record.template_type,
-      status: 'uploaded',
+      status: 'summarizing',
       error_message: '',
     });
-    processUploadedRecord(updated, store, { ...config, devFakeAsr: true });
+    await summarizeExistingRecord(updated, store, config);
     sendJson(res, 200, { record: serializeRecord(store.findById('audio_records', record.id), store) });
     return;
   }
@@ -215,8 +243,29 @@ async function routeRequest(req, res, store, config) {
   if (transcribeMatch && req.method === 'POST') {
     const record = requireRecord(transcribeMatch[1], store);
     ensureCanViewRecord(auth.employee, record, store);
-    processUploadedRecord(record, store, config);
+    await enqueueRecordProcessing(record, store, config);
     sendJson(res, 200, { record: serializeRecord(store.findById('audio_records', record.id), store) });
+    return;
+  }
+
+  const followupMatch = pathname.match(/^\/api\/records\/([^/]+)\/followup$/);
+  if (followupMatch && req.method === 'PATCH') {
+    const record = requireRecord(followupMatch[1], store);
+    ensureCanViewRecord(auth.employee, record, store);
+    const body = await readJson(req);
+    const followup = upsertByAudioRecord(store, 'followup_forms', record.id, {
+      business_type: body.businessType || businessTypeForTemplate(record.template_type),
+      stage: body.stage || '',
+      customer_name: body.customerName || '',
+      company_name: body.companyName || '',
+      status_label: body.statusLabel || '',
+      suggested_tag: body.suggestedTag || '',
+      followup_markdown: String(body.followupMarkdown || '').trim(),
+      fields_json: body.fields || {},
+      manual_edited: true,
+    });
+    addAudit(store, auth.employee.id, 'edit_followup', 'audio_record', record.id);
+    sendJson(res, 200, { followupForm: followup, record: serializeRecord(record, store) });
     return;
   }
 
@@ -225,7 +274,7 @@ async function routeRequest(req, res, store, config) {
     const record = requireRecord(exportMatch[1], store);
     ensureCanViewRecord(auth.employee, record, store);
     const body = await readJson(req);
-    const exportFile = createExportFile(record, auth.employee, body, store, config);
+    const exportFile = await createExportFile(record, auth.employee, body, store, config);
     if (record.owner_employee_id !== auth.employee.id) {
       addAudit(store, auth.employee.id, 'export_other_record', 'audio_record', record.id, body);
     }
@@ -242,10 +291,17 @@ async function routeRequest(req, res, store, config) {
     if (!exportFile) throw httpError(404, '导出文件不存在');
     const record = requireRecord(exportFile.audio_record_id, store);
     ensureCanViewRecord(auth.employee, record, store);
+    if (exportFile.storage === 'r2') {
+      res.writeHead(302, {
+        Location: presignR2Url(config, { method: 'GET', key: exportFile.r2_key, expiresIn: 900 }),
+      });
+      res.end();
+      return;
+    }
     const filePath = path.join(config.exportDir, exportFile.r2_key);
     if (!fs.existsSync(filePath)) throw httpError(404, '导出文件不存在');
     res.writeHead(200, {
-      'Content-Type': exportFile.format === 'md' ? 'text/markdown; charset=utf-8' : 'text/plain; charset=utf-8',
+      'Content-Type': contentTypeForExport(exportFile.format),
       'Content-Disposition': `attachment; filename="${encodeURIComponent(path.basename(filePath))}"`,
     });
     fs.createReadStream(filePath).pipe(res);
@@ -256,6 +312,17 @@ async function routeRequest(req, res, store, config) {
     ensureCanManageEmployees(auth.employee);
     const employees = store.table('employees').map((employee) => serializeEmployee(employee, store));
     sendJson(res, 200, { employees });
+    return;
+  }
+
+  if (pathname === '/api/admin/audit-logs' && req.method === 'GET') {
+    ensureCanManageEmployees(auth.employee);
+    sendJson(res, 200, {
+      auditLogs: store.table('audit_logs')
+        .slice()
+        .sort((left, right) => String(right.created_at).localeCompare(String(left.created_at)))
+        .slice(0, 300),
+    });
     return;
   }
 
@@ -442,42 +509,70 @@ function filterRecord(record, params, store) {
   return true;
 }
 
-function processUploadedRecord(record, store, config) {
+async function enqueueRecordProcessing(record, store, config) {
   if (config.devFakeAsr) {
-    const summary = buildLocalSummary(record);
-    store.insert('transcripts', {
+    await processUploadedRecord(record, store, config);
+    return;
+  }
+  processUploadedRecord(record, store, config).catch((error) => {
+    store.update('audio_records', record.id, {
+      status: 'failed',
+      error_message: error.message || String(error),
+    });
+  });
+}
+
+async function processUploadedRecord(record, store, config) {
+  const localPath = path.join(config.uploadDir, `${record.id}.${safeExtension(record.original_file_name || '')}`);
+  let audioUrl = '';
+  let storageKey = record.r2_key;
+  if (isR2Configured(config)) {
+    storageKey = storageKey || `audio/${new Date().toISOString().slice(0, 10)}/${record.id}/${record.original_file_name || `${record.id}.mp3`}`;
+    const buffer = fs.existsSync(localPath) ? fs.readFileSync(localPath) : Buffer.alloc(0);
+    await putR2Object(config, storageKey, buffer, record.mime_type || 'application/octet-stream');
+    store.update('audio_records', record.id, { r2_key: storageKey, status: 'uploaded' });
+    audioUrl = presignR2Url(config, { method: 'GET', key: storageKey, expiresIn: 7200 });
+  } else {
+    storageKey = storageKey || path.basename(localPath);
+    store.update('audio_records', record.id, { r2_key: storageKey });
+  }
+
+  if (config.devFakeAsr) {
+    const transcriptText = `本地开发模式已接收文件：${record.original_file_name || record.title}`;
+    const summary = buildLocalSummary(record, transcriptText);
+    upsertByAudioRecord(store, 'transcripts', record.id, {
       audio_record_id: record.id,
       asr_provider: 'local-dev',
       asr_task_id: '',
-      raw_text: `本地开发模式已接收文件：${record.original_file_name || record.title}`,
-      corrected_text: `本地开发模式已接收文件：${record.original_file_name || record.title}`,
+      raw_text: transcriptText,
+      corrected_text: transcriptText,
       segments_json: [],
       speaker_aliases_json: {},
       duration_ms: 0,
       cost_cny: 0,
     });
-    store.insert('summaries', {
+    upsertByAudioRecord(store, 'summaries', record.id, {
       audio_record_id: record.id,
       template_type: record.template_type,
       summary_markdown: summary.summaryMarkdown,
       overview_card_json: summary.overviewCard,
       mind_map_json: {},
       structured_json: summary.structuredJson,
-      model_provider: 'local-dev',
-      model_name: 'local-template',
-      model_error: '',
+      model_provider: summary.modelProvider || 'local-dev',
+      model_name: summary.modelName || 'local-template',
+      model_error: summary.modelError || '',
       version: 1,
     });
-    store.insert('followup_forms', {
+    upsertByAudioRecord(store, 'followup_forms', record.id, {
       audio_record_id: record.id,
       business_type: businessTypeForTemplate(record.template_type),
-      stage: record.template_type === 'recruitment_followup' ? 'initial_effective_followup' : '',
-      customer_name: '',
-      company_name: '',
-      status_label: '待核对',
-      suggested_tag: '待核对',
+      stage: summary.followupStage || '',
+      customer_name: summary.customerName || '',
+      company_name: summary.companyName || '',
+      status_label: summary.statusLabel || '待核对',
+      suggested_tag: summary.suggestedTag || '待核对',
       followup_markdown: summary.followupMarkdown,
-      fields_json: summary.structuredJson,
+      fields_json: summary.followupFields || summary.structuredJson,
       manual_edited: false,
     });
     store.update('audio_records', record.id, {
@@ -496,9 +591,69 @@ function processUploadedRecord(record, store, config) {
     return;
   }
 
-  store.update('audio_records', record.id, {
+  if (!isR2Configured(config)) {
+    store.update('audio_records', record.id, {
+      status: 'failed',
+      error_message: '真实 DashScope 转写需要先配置 Cloudflare R2，以便生成公网临时音频链接。',
+    });
+    return;
+  }
+
+  const transcribing = store.update('audio_records', record.id, {
     status: 'transcribing',
-    error_message: 'DashScope 真实转写适配层已预留，下一阶段接入 R2 临时链接和轮询。',
+    error_message: '',
+  });
+  const transcription = await transcribeWithDashScope(config, audioUrl);
+  upsertByAudioRecord(store, 'transcripts', record.id, {
+    audio_record_id: record.id,
+    asr_provider: 'dashscope',
+    asr_task_id: transcription.taskId,
+    raw_text: transcription.rawText,
+    corrected_text: transcription.correctedText,
+    segments_json: transcription.segments,
+    speaker_aliases_json: {},
+    duration_ms: transcription.durationMs,
+    cost_cny: null,
+  });
+  store.update('audio_records', record.id, {
+    status: 'summarizing',
+    duration_seconds: transcription.durationMs ? Math.round(transcription.durationMs / 1000) : record.duration_seconds,
+  });
+  await summarizeExistingRecord(transcribing, store, config);
+}
+
+async function summarizeExistingRecord(record, store, config) {
+  const transcript = store.table('transcripts').find((item) => item.audio_record_id === record.id);
+  const transcriptText = transcript?.corrected_text || transcript?.raw_text || '';
+  const summary = await generateSummary(config, record, transcriptText);
+  upsertByAudioRecord(store, 'summaries', record.id, {
+    audio_record_id: record.id,
+    template_type: record.template_type,
+    summary_markdown: summary.summaryMarkdown,
+    overview_card_json: summary.overviewCard,
+    mind_map_json: summary.mindMap || {},
+    structured_json: summary.structuredJson,
+    model_provider: summary.modelProvider || 'local-template',
+    model_name: summary.modelName || 'local-template',
+    model_error: summary.modelError || '',
+    version: 1,
+  });
+  upsertByAudioRecord(store, 'followup_forms', record.id, {
+    audio_record_id: record.id,
+    business_type: businessTypeForTemplate(record.template_type),
+    stage: summary.followupStage || '',
+    customer_name: summary.customerName || '',
+    company_name: summary.companyName || '',
+    status_label: summary.statusLabel || '待核对',
+    suggested_tag: summary.suggestedTag || '待核对',
+    followup_markdown: summary.followupMarkdown,
+    fields_json: summary.followupFields || summary.structuredJson,
+    manual_edited: false,
+  });
+  store.update('audio_records', record.id, {
+    status: 'completed',
+    completed_at: new Date().toISOString(),
+    error_message: '',
   });
 }
 
@@ -509,39 +664,49 @@ function businessTypeForTemplate(templateType) {
   return 'general';
 }
 
-function createExportFile(record, employee, body, store, config) {
+async function createExportFile(record, employee, body, store, config) {
   const target = body.target || 'full_record';
   const format = body.format || 'md';
   if (!['md', 'txt', 'docx', 'pdf'].includes(format)) throw httpError(400, '暂不支持该导出格式');
-  if (['docx', 'pdf'].includes(format)) {
-    throw httpError(400, 'DOCX/PDF 导出接口已预留，当前先支持 Markdown 和 TXT');
-  }
-
-  const summary = store.table('summaries').find((item) => item.audio_record_id === record.id);
-  const transcript = store.table('transcripts').find((item) => item.audio_record_id === record.id);
-  const followup = store.table('followup_forms').find((item) => item.audio_record_id === record.id);
-  const text = [
-    `# ${record.title}`,
-    '',
-    `员工：${store.findById('employees', record.owner_employee_id)?.display_name || ''}`,
-    `创建时间：${record.created_at}`,
-    `模板：${record.template_type}`,
-    '',
-    target !== 'transcript' ? '## 总结\n' + (summary?.summary_markdown || '暂无总结') : '',
-    target !== 'summary' ? '## 逐字稿\n' + (transcript?.corrected_text || transcript?.raw_text || '暂无逐字稿') : '',
-    target !== 'summary' && target !== 'transcript' ? '## 跟单\n' + (followup?.followup_markdown || '暂无跟单') : '',
-  ].filter(Boolean).join('\n\n');
+  const markdown = buildExportText(record, store, target, true);
+  let buffer;
+  if (format === 'md') buffer = Buffer.from(markdown);
+  if (format === 'txt') buffer = Buffer.from(stripMarkdown(markdown));
+  if (format === 'docx') buffer = createDocxBuffer(record.title, stripMarkdown(markdown));
+  if (format === 'pdf') buffer = createPdfBuffer(record.title, markdown);
 
   fs.mkdirSync(config.exportDir, { recursive: true });
   const fileName = `${record.id}-${target}.${format}`;
-  fs.writeFileSync(path.join(config.exportDir, fileName), format === 'txt' ? stripMarkdown(text) : text);
+  fs.writeFileSync(path.join(config.exportDir, fileName), buffer);
+  let storage = 'local';
+  let storageKey = fileName;
+  if (isR2Configured(config)) {
+    storageKey = `exports/${new Date().toISOString().slice(0, 10)}/${fileName}`;
+    await putR2Object(config, storageKey, buffer, contentTypeForExport(format));
+    storage = 'r2';
+  }
   return store.insert('export_files', {
     audio_record_id: record.id,
     export_type: target,
     format,
-    r2_key: fileName,
+    r2_key: storageKey,
+    storage,
     created_by: employee.id,
   });
+}
+
+function upsertByAudioRecord(store, tableName, audioRecordId, row) {
+  const existing = store.table(tableName).find((item) => item.audio_record_id === audioRecordId);
+  if (existing) return store.update(tableName, existing.id, row);
+  return store.insert(tableName, row);
+}
+
+function contentTypeForExport(format) {
+  if (format === 'md') return 'text/markdown; charset=utf-8';
+  if (format === 'txt') return 'text/plain; charset=utf-8';
+  if (format === 'docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (format === 'pdf') return 'application/pdf';
+  return 'application/octet-stream';
 }
 
 function createEmployee(body, store) {
@@ -703,13 +868,6 @@ function safeExtension(fileName) {
 function defaultRecordTitle(sourceType) {
   const date = new Date().toISOString().slice(0, 10);
   return sourceType === 'web_capture' ? `${date} 网页录音` : `${date} 手动上传录音`;
-}
-
-function stripMarkdown(markdown) {
-  return markdown
-    .replace(/^#+\s*/gm, '')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/^- /gm, '· ');
 }
 
 module.exports = {
