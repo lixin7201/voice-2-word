@@ -47,7 +47,7 @@ async function generateSummary(config, record, transcriptText, fetchImpl = fetch
 }
 
 async function callChatCompletion(provider, record, transcriptText, fetchImpl) {
-  const response = await fetchImpl(`${provider.baseUrl.replace(/\/$/, '')}/v1/chat/completions`, {
+  const response = await fetchImpl(chatCompletionsUrl(provider.baseUrl), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${provider.apiKey}`,
@@ -83,6 +83,11 @@ async function callChatCompletion(provider, record, transcriptText, fetchImpl) {
   };
 }
 
+function chatCompletionsUrl(baseUrl) {
+  const clean = String(baseUrl || '').replace(/\/$/, '');
+  return clean.endsWith('/v1') ? `${clean}/chat/completions` : `${clean}/v1/chat/completions`;
+}
+
 function parseJsonContent(content) {
   const trimmed = String(content || '').trim();
   try {
@@ -95,5 +100,6 @@ function parseJsonContent(content) {
 }
 
 module.exports = {
+  chatCompletionsUrl,
   generateSummary,
 };

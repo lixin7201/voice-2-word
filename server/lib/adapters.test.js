@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { normalizeDashScopeTranscription } = require('./dashscope');
+const { chatCompletionsUrl } = require('./llm');
 const { presignR2Url } = require('./r2');
 const { detectRecruitmentStage } = require('./templates');
 
@@ -47,4 +48,9 @@ test('creates Cloudflare R2 presigned S3-compatible URLs', () => {
   assert.ok(url.includes('X-Amz-Algorithm=AWS4-HMAC-SHA256'));
   assert.ok(url.includes('X-Amz-Expires=7200'));
   assert.ok(url.includes('X-Amz-Signature='));
+});
+
+test('accepts LLM base URLs with or without /v1', () => {
+  assert.equal(chatCompletionsUrl('https://api.moonshot.cn'), 'https://api.moonshot.cn/v1/chat/completions');
+  assert.equal(chatCompletionsUrl('https://api.moonshot.cn/v1'), 'https://api.moonshot.cn/v1/chat/completions');
 });
