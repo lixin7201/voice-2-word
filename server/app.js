@@ -15,6 +15,14 @@ const DEFAULT_DATA_FILE = path.join(process.cwd(), 'data', 'dev-db.json');
 const DEFAULT_UPLOAD_DIR = path.join(process.cwd(), 'uploads');
 const DEFAULT_EXPORT_DIR = path.join(process.cwd(), 'exports');
 const SUPPORTED_EXTENSIONS = new Set(['mp3', 'm4a', 'wav', 'aac', 'flac', 'ogg', 'opus', 'mp4', 'mov', 'webm']);
+const WEB_ASSETS = new Map([
+  ['/', { file: 'webapp.html', contentType: 'text/html; charset=utf-8' }],
+  ['/app', { file: 'webapp.html', contentType: 'text/html; charset=utf-8' }],
+  ['/webapp.html', { file: 'webapp.html', contentType: 'text/html; charset=utf-8' }],
+  ['/webapp.css', { file: 'webapp.css', contentType: 'text/css; charset=utf-8' }],
+  ['/sidepanel.css', { file: 'sidepanel.css', contentType: 'text/css; charset=utf-8' }],
+  ['/sidepanel.js', { file: 'sidepanel.js', contentType: 'text/javascript; charset=utf-8' }],
+]);
 
 function createVoiceServer(options = {}) {
   const config = {
@@ -68,6 +76,10 @@ async function routeRequest(req, res, store, config) {
   const url = new URL(req.url, 'http://localhost');
   const pathname = url.pathname;
   const runtimeConfig = resolveRuntimeConfig(config, store);
+
+  if (req.method === 'GET' && serveWebAsset(pathname, res)) {
+    return;
+  }
 
   if (req.method === 'GET' && pathname === '/health') {
     sendJson(res, 200, {
@@ -865,6 +877,19 @@ async function readMultipart(req) {
 function sendJson(res, status, payload) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(payload));
+}
+
+function serveWebAsset(pathname, res) {
+  const asset = WEB_ASSETS.get(pathname);
+  if (!asset) return false;
+  const filePath = path.join(process.cwd(), asset.file);
+  if (!fs.existsSync(filePath)) throw httpError(404, '页面文件不存在');
+  res.writeHead(200, {
+    'Content-Type': asset.contentType,
+    'Cache-Control': 'no-store',
+  });
+  fs.createReadStream(filePath).pipe(res);
+  return true;
 }
 
 function setCorsHeaders(res) {

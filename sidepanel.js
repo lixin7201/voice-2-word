@@ -1,4 +1,7 @@
-const DEFAULT_API_BASE_URL = 'http://lixindemac-studio.local:8127';
+const chromeApi = typeof chrome === 'undefined' ? null : chrome;
+const IS_HOSTED_PAGE = typeof window !== 'undefined' && ['http:', 'https:'].includes(window.location.protocol);
+const IS_EXTENSION_SURFACE = Boolean(chromeApi?.runtime?.id);
+const DEFAULT_API_BASE_URL = IS_HOSTED_PAGE ? window.location.origin : 'http://lixindemac-studio.local:8127';
 const STORAGE_KEYS = ['apiBaseUrl', 'accessToken', 'currentUser'];
 
 const appState = {
@@ -23,7 +26,6 @@ const appState = {
 };
 
 const app = document.getElementById('app');
-const chromeApi = typeof chrome === 'undefined' ? null : chrome;
 
 document.addEventListener('DOMContentLoaded', init);
 
@@ -58,6 +60,7 @@ async function init() {
 }
 
 function render() {
+  document.body.dataset.view = appState.view;
   if (appState.view === 'login' || appState.view === 'loading') {
     app.innerHTML = renderLogin();
     bindLogin();
@@ -75,34 +78,55 @@ function render() {
 }
 
 function renderLogin() {
-  return `
-    <section class="glass section stack">
-      <div class="brand">
-        <h1 class="brand-title">大宜宾录音助手</h1>
-        <div class="brand-subtitle">录音转文字、总结、跟单记录</div>
-      </div>
-      ${renderStatus()}
-      <form id="login-form" class="form">
-        <details class="advanced-service">
-          <summary>服务地址（一般不用改）</summary>
-          <div class="field">
-            <label for="apiBaseUrl">后端地址</label>
-            <input id="apiBaseUrl" name="apiBaseUrl" value="${escapeHtml(appState.apiBaseUrl)}">
-          </div>
-        </details>
-        <div class="grid-2">
-          <div class="field">
-            <label for="loginName">工号/花名</label>
-            <input id="loginName" name="loginName" autocomplete="username" placeholder="离心">
-          </div>
-          <div class="field">
-            <label for="password">密码</label>
-            <input id="password" name="password" type="password" autocomplete="current-password" placeholder="默认 dayibin">
-          </div>
+  const intro = IS_HOSTED_PAGE ? `
+    <section class="login-intro">
+      <div class="brand-mark" aria-hidden="true">宜</div>
+      <p class="login-eyebrow">本地后端工作台</p>
+      <h1 class="login-heading">大宜宾录音助手</h1>
+      <p class="login-summary">录音转文字、会议纪要、跟单信息一站完成</p>
+      <dl class="login-proof">
+        <div>
+          <dt>服务地址</dt>
+          <dd>${escapeHtml(DEFAULT_API_BASE_URL)}</dd>
         </div>
-        <button class="btn primary" type="submit" ${appState.busy ? 'disabled' : ''}>登录</button>
-      </form>
+        <div>
+          <dt>默认测试账号</dt>
+          <dd>花名/工号「离心」，密码「dayibin」</dd>
+        </div>
+      </dl>
     </section>
+  ` : '';
+  return `
+    <div class="${IS_HOSTED_PAGE ? 'login-view' : ''}">
+      ${intro}
+      <section class="glass section stack login-card">
+        <div class="brand">
+          <h1 class="brand-title">大宜宾录音助手</h1>
+          <div class="brand-subtitle">录音转文字、总结、跟单记录</div>
+        </div>
+        ${renderStatus()}
+        <form id="login-form" class="form">
+          <details class="advanced-service">
+            <summary>服务地址（一般不用改）</summary>
+            <div class="field">
+              <label for="apiBaseUrl">后端地址</label>
+              <input id="apiBaseUrl" name="apiBaseUrl" value="${escapeHtml(appState.apiBaseUrl)}">
+            </div>
+          </details>
+          <div class="grid-2">
+            <div class="field">
+              <label for="loginName">工号/花名</label>
+              <input id="loginName" name="loginName" autocomplete="username" placeholder="离心">
+            </div>
+            <div class="field">
+              <label for="password">密码</label>
+              <input id="password" name="password" type="password" autocomplete="current-password" placeholder="默认 dayibin">
+            </div>
+          </div>
+          <button class="btn primary" type="submit" ${appState.busy ? 'disabled' : ''}>登录</button>
+        </form>
+      </section>
+    </div>
   `;
 }
 
@@ -126,10 +150,10 @@ function renderTopbar() {
 function renderNav() {
   const items = [
     ['home', '首页'],
-    ['capture', '监听'],
     ['upload', '上传'],
     ['history', '历史'],
   ];
+  if (IS_EXTENSION_SURFACE) items.splice(1, 0, ['capture', '监听']);
   if (appState.permissions.canManageEmployees) items.push(['employees', '员工']);
   if (appState.permissions.canManageSettings) items.push(['settings', '配置']);
   return `
@@ -170,8 +194,9 @@ function renderHome() {
           <div class="stat"><strong>${failed}</strong><span class="meta">失败任务</span></div>
         </div>
         <div class="btn-row">
-          <button class="btn primary" data-view="capture">监听当前页录音</button>
-          <button class="btn" data-view="upload">上传录音文件</button>
+          ${IS_EXTENSION_SURFACE ? '<button class="btn primary" data-view="capture">监听当前页录音</button>' : ''}
+          <button class="btn primary" data-view="upload">上传录音文件</button>
+          <button class="btn" data-view="history">查看历史记录</button>
         </div>
       </section>
       <section class="glass section">

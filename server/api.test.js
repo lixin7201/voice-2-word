@@ -69,6 +69,28 @@ test('seeded users log in with expected roles and departments', async () => {
   }
 });
 
+test('web root serves login workbench without weakening API auth', async () => {
+  const { server, baseUrl } = await startTestServer();
+  try {
+    const root = await fetch(`${baseUrl}/`);
+    assert.equal(root.status, 200);
+    assert.match(root.headers.get('content-type') || '', /text\/html/);
+    const html = await root.text();
+    assert.match(html, /大宜宾录音助手/);
+    assert.match(html, /sidepanel\.js/);
+
+    const stylesheet = await fetch(`${baseUrl}/webapp.css`);
+    assert.equal(stylesheet.status, 200);
+    assert.match(stylesheet.headers.get('content-type') || '', /text\/css/);
+
+    const protectedApi = await request(baseUrl, '/api/me');
+    assert.equal(protectedApi.response.status, 401);
+    assert.equal(protectedApi.body.error, '请先登录');
+  } finally {
+    server.close();
+  }
+});
+
 test('record permissions isolate employee, department lead, and admin access', async () => {
   const { server, baseUrl } = await startTestServer();
   try {
