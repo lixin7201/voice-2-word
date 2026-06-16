@@ -166,11 +166,11 @@ body.web-workbench .nav button:hover {
   color: var(--workbench-accent-strong);
 }
 
-body.web-workbench .app-shell > .status,
-body.web-workbench .app-shell > .stack,
-body.web-workbench .app-shell > .glass.section,
-body.web-workbench .app-shell > .detail-header {
+body.web-workbench .app-shell > .main-panel {
   grid-column: 2;
+  align-self: start;
+  display: grid;
+  gap: 12px;
   min-width: 0;
 }
 
@@ -200,6 +200,10 @@ body.web-workbench .btn.primary,
 body.web-workbench .nav button.active,
 body.web-workbench .tabbar button.active {
   background: var(--workbench-accent-strong);
+}
+
+body.web-workbench .nav button.active {
+  color: white;
 }
 
 body.web-workbench .btn {

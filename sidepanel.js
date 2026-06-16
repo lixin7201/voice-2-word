@@ -2,6 +2,8 @@ const chromeApi = typeof chrome === 'undefined' ? null : chrome;
 const IS_HOSTED_PAGE = typeof window !== 'undefined' && ['http:', 'https:'].includes(window.location.protocol);
 const IS_EXTENSION_SURFACE = Boolean(chromeApi?.runtime?.id);
 const DEFAULT_API_BASE_URL = IS_HOSTED_PAGE ? window.location.origin : 'http://lixindemac-studio.local:8127';
+const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+const UPLOAD_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 const STORAGE_KEYS = ['apiBaseUrl', 'accessToken', 'currentUser'];
 
 const appState = {
@@ -22,6 +24,7 @@ const appState = {
   employees: [],
   settingGroups: [],
   systemStatus: null,
+  loginNameDraft: '',
   busy: false,
 };
 
@@ -44,6 +47,8 @@ async function init() {
   }
 
   if (appState.accessToken) {
+    appState.view = 'home';
+    render();
     try {
       await loadMe();
       await loadDepartments();
@@ -70,8 +75,7 @@ function render() {
   app.innerHTML = [
     renderTopbar(),
     renderNav(),
-    renderStatus(),
-    renderCurrentView(),
+    `<main class="main-panel">${renderStatus()}${renderCurrentView()}</main>`,
   ].join('');
   bindCommon();
   bindCurrentView();
@@ -116,14 +120,14 @@ function renderLogin() {
           <div class="grid-2">
             <div class="field">
               <label for="loginName">工号/花名</label>
-              <input id="loginName" name="loginName" autocomplete="username" placeholder="离心">
+              <input id="loginName" name="loginName" autocomplete="username" placeholder="离心" value="${escapeHtml(appState.loginNameDraft)}">
             </div>
             <div class="field">
               <label for="password">密码</label>
               <input id="password" name="password" type="password" autocomplete="current-password" placeholder="默认 dayibin">
             </div>
           </div>
-          <button class="btn primary" type="submit" ${appState.busy ? 'disabled' : ''}>登录</button>
+          <button class="btn primary" type="submit" data-action="login-submit" ${appState.busy ? 'disabled' : ''}>登录</button>
         </form>
       </section>
     </div>
@@ -493,13 +497,16 @@ function renderSettings() {
       </div>
       <form id="settings-form" class="form">
         ${(appState.settingGroups || []).map(renderSettingGroup).join('') || '<div class="empty">正在读取后台配置...</div>'}
-        <button class="btn primary" type="submit" ${appState.busy ? 'disabled' : ''}>保存后台配置</button>
+        <button class="btn primary" type="submit" ${appState.busy || !appState.settingGroups.length ? 'disabled' : ''}>保存后台配置</button>
       </form>
     </section>
   `;
 }
 
 function renderConfigBadge(label, ok) {
+  if (ok === undefined || ok === null) {
+    return `<span class="badge">${escapeHtml(label)}：读取中</span>`;
+  }
   return `<span class="badge ${ok ? 'completed' : 'failed'}">${escapeHtml(label)}：${ok ? '已配置' : '未配置'}</span>`;
 }
 
@@ -585,22 +592,26 @@ function renderTemplateSelect(id, selected) {
 function bindLogin() {
   const form = document.getElementById('login-form');
   if (!form) return;
-  form.addEventListener('submit', async (event) => {
+  const handleLogin = async (event) => {
     event.preventDefault();
+    if (appState.busy) return;
     const data = new FormData(form);
+    appState.loginNameDraft = String(data.get('loginName') || '').trim();
     appState.apiBaseUrl = String(data.get('apiBaseUrl') || DEFAULT_API_BASE_URL).trim();
     await storageSet({ apiBaseUrl: appState.apiBaseUrl });
+    setStatus('正在登录...', '');
     await runBusy(async () => {
       const body = await api('/api/auth/login', {
         method: 'POST',
         body: {
-          loginName: String(data.get('loginName') || '').trim(),
+          loginName: appState.loginNameDraft,
           password: String(data.get('password') || ''),
         },
         skipAuth: true,
       });
       appState.accessToken = body.accessToken;
       appState.currentUser = body.employee;
+      appState.loginNameDraft = '';
       await storageSet({ accessToken: body.accessToken, currentUser: body.employee, apiBaseUrl: appState.apiBaseUrl });
       await loadMe();
       await loadDepartments();
@@ -608,16 +619,25 @@ function bindLogin() {
       setStatus('登录成功', 'success');
       appState.view = 'home';
     });
-  });
+  };
+  form.addEventListener('submit', handleLogin);
+  form.querySelector('[data-action="login-submit"]')?.addEventListener('click', handleLogin);
 }
 
 function bindCommon() {
   document.querySelectorAll('[data-view]').forEach((button) => {
     button.addEventListener('click', async () => {
-      appState.view = button.dataset.view;
-      if (appState.view === 'employees') await loadEmployeesSafe();
-      if (appState.view === 'settings') await loadSettingsSafe();
+      const nextView = button.dataset.view;
+      appState.view = nextView;
       render();
+      if (nextView === 'employees') {
+        await loadEmployeesSafe();
+        render();
+      }
+      if (nextView === 'settings') {
+        await loadSettingsSafe();
+        render();
+      }
     });
   });
 
@@ -795,6 +815,7 @@ async function uploadRecordFile(recordId, blob, fileName, extraFields = {}) {
   const body = await api(`/api/records/${recordId}/upload`, {
     method: 'POST',
     form,
+    timeoutMs: UPLOAD_REQUEST_TIMEOUT_MS,
   });
   return body.record;
 }
@@ -1017,11 +1038,24 @@ async function api(path, options = {}) {
   if (!options.skipAuth && appState.accessToken) {
     headers.Authorization = `Bearer ${appState.accessToken}`;
   }
-  const response = await fetch(`${appState.apiBaseUrl.replace(/\/$/, '')}${path}`, {
-    method: options.method || 'GET',
-    headers,
-    body,
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs || DEFAULT_REQUEST_TIMEOUT_MS);
+  let response;
+  try {
+    response = await fetch(`${appState.apiBaseUrl.replace(/\/$/, '')}${path}`, {
+      method: options.method || 'GET',
+      headers,
+      body,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      throw new Error('请求超时，请确认后端服务是否正常。');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
   if (!response.ok) {
