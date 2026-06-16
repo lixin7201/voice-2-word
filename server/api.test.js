@@ -83,6 +83,10 @@ test('web root serves login workbench without weakening API auth', async () => {
     assert.equal(stylesheet.status, 200);
     assert.match(stylesheet.headers.get('content-type') || '', /text\/css/);
 
+    const sidepanelScriptHead = await fetch(`${baseUrl}/sidepanel.js`, { method: 'HEAD' });
+    assert.equal(sidepanelScriptHead.status, 200);
+    assert.match(sidepanelScriptHead.headers.get('content-type') || '', /text\/javascript/);
+
     const protectedApi = await request(baseUrl, '/api/me');
     assert.equal(protectedApi.response.status, 401);
     assert.equal(protectedApi.body.error, '请先登录');

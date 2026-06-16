@@ -77,7 +77,7 @@ async function routeRequest(req, res, store, config) {
   const pathname = url.pathname;
   const runtimeConfig = resolveRuntimeConfig(config, store);
 
-  if (req.method === 'GET' && serveWebAsset(pathname, res)) {
+  if (['GET', 'HEAD'].includes(req.method) && serveWebAsset(pathname, req.method, res)) {
     return;
   }
 
@@ -879,7 +879,7 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function serveWebAsset(pathname, res) {
+function serveWebAsset(pathname, method, res) {
   const asset = WEB_ASSETS.get(pathname);
   if (!asset) return false;
   const filePath = path.join(process.cwd(), asset.file);
@@ -888,6 +888,10 @@ function serveWebAsset(pathname, res) {
     'Content-Type': asset.contentType,
     'Cache-Control': 'no-store',
   });
+  if (method === 'HEAD') {
+    res.end();
+    return true;
+  }
   fs.createReadStream(filePath).pipe(res);
   return true;
 }

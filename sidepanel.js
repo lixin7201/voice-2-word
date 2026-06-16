@@ -236,12 +236,13 @@ function renderCandidateList() {
         <div class="item">
           <div class="item-title">
             <span>${escapeHtml(candidate.name || `候选 ${index + 1}`)}</span>
-            <span class="badge">${escapeHtml(candidate.type || 'media')}</span>
+            <span class="badge ${candidate.uploadable === false ? 'failed' : ''}">${candidate.uploadable === false ? '需处理' : escapeHtml(candidate.type || 'media')}</span>
           </div>
-          <div class="meta">${escapeHtml(candidate.source || 'network')} · ${formatBytes(candidate.size || 0)}</div>
+          <div class="meta">${escapeHtml(candidate.source || 'network')} · ${escapeHtml(candidate.contentType || candidate.type || 'media')} · ${formatBytes(candidate.size || 0)}</div>
           <div class="meta">${escapeHtml(candidate.url || '')}</div>
+          ${candidate.uploadable === false ? `<div class="status error">${escapeHtml(candidate.unsupportedReason || '该候选暂不能直接上传为单个录音文件。')}</div>` : ''}
           <div class="btn-row" style="margin-top:8px">
-            <button class="btn primary" data-action="upload-candidate" data-index="${index}" ${appState.busy ? 'disabled' : ''}>开始识别</button>
+            <button class="btn primary" data-action="upload-candidate" data-index="${index}" ${appState.busy || candidate.uploadable === false ? 'disabled' : ''}>开始识别</button>
           </div>
         </div>
       `).join('')}
@@ -729,6 +730,11 @@ function handleBackgroundState(state) {
 async function uploadCandidate(index) {
   const candidate = appState.candidates[index];
   if (!candidate?.url) return;
+  if (candidate.uploadable === false) {
+    setStatus(candidate.unsupportedReason || '该候选暂不能直接上传为单个录音文件。', 'error');
+    render();
+    return;
+  }
   const templateType = document.getElementById('capture-template')?.value || appState.defaultTemplate;
   await runBusy(async () => {
     setStatus('正在读取候选录音...', '');
@@ -736,7 +742,7 @@ async function uploadCandidate(index) {
       if (!response.ok) throw new Error(`读取录音失败：HTTP ${response.status}`);
       return response.blob();
     });
-    const fileName = candidate.name || fileNameFromUrl(candidate.url);
+    const fileName = supportedCandidateFileName(candidate, blob.type);
     const record = await createRecord({
       sourceType: 'web_capture',
       sourcePageUrl: candidate.pageUrl || '',
@@ -1091,6 +1097,43 @@ function fileNameFromUrl(url) {
   } catch {
     return 'record.mp3';
   }
+}
+
+function supportedCandidateFileName(candidate, blobType) {
+  const originalName = candidate.name || fileNameFromUrl(candidate.url);
+  const existingExt = safeExtension(originalName);
+  if (isSupportedAudioExtension(existingExt)) return originalName;
+  const candidateExt = isSupportedAudioExtension(candidate.type) ? candidate.type : '';
+  const blobExt = extensionForContentType(blobType || candidate.contentType);
+  const ext = candidateExt || blobExt;
+  if (!ext) throw new Error('无法判断该网页录音格式，请尝试下载后用“上传录音文件”处理。');
+  return `${originalName.replace(/\.[^.]+$/, '')}.${ext}`;
+}
+
+function isSupportedAudioExtension(value) {
+  return ['mp3', 'm4a', 'wav', 'aac', 'flac', 'ogg', 'opus', 'mp4', 'mov', 'webm'].includes(String(value || '').toLowerCase());
+}
+
+function safeExtension(fileName) {
+  return String(fileName || '').split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function extensionForContentType(contentType) {
+  return ({
+    'audio/mpeg': 'mp3',
+    'audio/mp3': 'mp3',
+    'audio/mp4': 'm4a',
+    'audio/x-m4a': 'm4a',
+    'audio/aac': 'aac',
+    'audio/wav': 'wav',
+    'audio/x-wav': 'wav',
+    'audio/flac': 'flac',
+    'audio/ogg': 'ogg',
+    'audio/opus': 'opus',
+    'video/mp4': 'mp4',
+    'video/quicktime': 'mov',
+    'video/webm': 'webm',
+  })[String(contentType || '').split(';')[0].trim().toLowerCase()] || '';
 }
 
 function sanitizeFileName(value) {
