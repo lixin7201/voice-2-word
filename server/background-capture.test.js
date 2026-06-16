@@ -1,8 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  candidateKey,
   candidateFromUrl,
   headerValue,
+  isVolatileQueryParam,
   mergeCandidates,
   stripQuery,
 } = require('../background');
@@ -44,9 +46,23 @@ test('ignores static assets and media segments that are not standalone recording
   }), null);
 });
 
-test('merges candidates by clean URL and prefers uploadable network responses', () => {
-  const pageCandidate = candidateFromUrl('https://example.com/audio?id=1', 'page-link', { size: 1 });
-  const networkCandidate = candidateFromUrl('https://example.com/audio?id=2', 'network:media', {
+test('keeps meaningful query params so multiple recordings are not collapsed', () => {
+  const first = candidateFromUrl('https://example.com/audio?id=1', 'network:media', {
+    contentType: 'audio/mpeg',
+    size: 1,
+  });
+  const second = candidateFromUrl('https://example.com/audio?id=2', 'network:media', {
+    contentType: 'audio/mpeg',
+    size: 2,
+  });
+  const merged = mergeCandidates([first, second]);
+  assert.equal(merged.length, 2);
+  assert.notEqual(candidateKey(first.url), candidateKey(second.url));
+});
+
+test('merges volatile signed URL variants and prefers richer network responses', () => {
+  const pageCandidate = candidateFromUrl('https://example.com/audio?id=1&token=old', 'page-link', { size: 1 });
+  const networkCandidate = candidateFromUrl('https://example.com/audio?X-Amz-Signature=abc&id=1&X-Amz-Expires=300', 'network:media', {
     contentType: 'audio/mpeg',
     size: 2,
   });
@@ -54,8 +70,17 @@ test('merges candidates by clean URL and prefers uploadable network responses', 
   assert.equal(merged.length, 1);
   assert.equal(merged[0].source, 'network:media');
   assert.equal(merged[0].type, 'mp3');
+  assert.equal(candidateKey(pageCandidate.url), 'https://example.com/audio?id=1');
+  assert.equal(candidateKey(networkCandidate.url), 'https://example.com/audio?id=1');
 });
 
 test('reads response headers case-insensitively', () => {
   assert.equal(headerValue([{ name: 'Content-Type', value: 'audio/mpeg' }], 'content-type'), 'audio/mpeg');
+});
+
+test('classifies volatile query params used by signed media URLs', () => {
+  assert.equal(isVolatileQueryParam('X-Amz-Signature'), true);
+  assert.equal(isVolatileQueryParam('token'), true);
+  assert.equal(isVolatileQueryParam('id'), false);
+  assert.equal(isVolatileQueryParam('recordId'), false);
 });

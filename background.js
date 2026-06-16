@@ -284,7 +284,7 @@ function mergeCandidates(candidates) {
   const seen = new Map();
   for (const candidate of candidates) {
     if (!candidate?.url) continue;
-    const key = stripQuery(candidate.url);
+    const key = candidateKey(candidate.url);
     const previous = seen.get(key);
     if (!previous || candidateScore(candidate) > candidateScore(previous)) {
       seen.set(key, candidate);
@@ -312,6 +312,43 @@ function stripQuery(url) {
   } catch {
     return String(url).split('?')[0].split('#')[0];
   }
+}
+
+function candidateKey(url) {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = '';
+    for (const key of Array.from(parsed.searchParams.keys())) {
+      if (isVolatileQueryParam(key)) parsed.searchParams.delete(key);
+    }
+    parsed.searchParams.sort();
+    return parsed.toString();
+  } catch {
+    return String(url).split('#')[0];
+  }
+}
+
+function isVolatileQueryParam(key) {
+  const normalized = String(key || '').toLowerCase();
+  return (
+    normalized === 'token' ||
+    normalized === 'access_token' ||
+    normalized === 'auth' ||
+    normalized === 'authorization' ||
+    normalized === 'signature' ||
+    normalized === 'sig' ||
+    normalized === 'expires' ||
+    normalized === 'expires_at' ||
+    normalized === 'expiration' ||
+    normalized === 'policy' ||
+    normalized === 'credential' ||
+    normalized === 'date' ||
+    normalized === 'security-token' ||
+    normalized.startsWith('x-amz-') ||
+    normalized.startsWith('x-oss-') ||
+    normalized.startsWith('response-') ||
+    normalized.startsWith('_')
+  );
 }
 
 function enrichCandidate(candidate, tab) {
@@ -639,9 +676,11 @@ function installPageMediaObserver() {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
+    candidateKey,
     candidateFromUrl,
     extensionFromUrl,
     headerValue,
+    isVolatileQueryParam,
     mergeCandidates,
     stripQuery,
   };
