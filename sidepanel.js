@@ -29,6 +29,7 @@ const appState = {
 };
 
 const app = document.getElementById('app');
+let scheduledRender = 0;
 
 document.addEventListener('DOMContentLoaded', init);
 
@@ -79,6 +80,17 @@ function render() {
   ].join('');
   bindCommon();
   bindCurrentView();
+}
+
+function scheduleRender() {
+  if (scheduledRender) return;
+  const frame = typeof window !== 'undefined' && window.requestAnimationFrame
+    ? window.requestAnimationFrame
+    : (callback) => window.setTimeout(callback, 16);
+  scheduledRender = frame(() => {
+    scheduledRender = 0;
+    render();
+  });
 }
 
 function renderLogin() {
@@ -737,14 +749,15 @@ async function scanPage() {
 function handleBackgroundState(state) {
   appState.busy = ['extracting'].includes(state.phase);
   if (Array.isArray(state.candidates)) {
-    appState.candidates = state.candidates;
+    appState.candidates = state.candidates.slice(0, 50);
   } else if (state.url) {
     appState.candidates = [{ url: state.url, name: fileNameFromUrl(state.url), type: 'media', source: 'page', size: 0 }];
   }
   if (state.phase === 'error') setStatus(state.error || '扫描失败', 'error');
   if (state.phase === 'confirm') setStatus(state.statusText || '发现候选录音', 'success');
   if (state.phase === 'extracting') setStatus(state.statusText || '正在扫描...', '');
-  render();
+  if (state.phase === 'idle') setStatus(state.statusText || '', '');
+  scheduleRender();
 }
 
 async function uploadCandidate(index) {

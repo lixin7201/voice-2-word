@@ -2,6 +2,7 @@ const DEFAULT_API_BASE_URL = 'http://lixindemac-studio.local:8127';
 const MAX_CANDIDATES = 50;
 const MAX_NETWORK_CANDIDATES_PER_TAB = 80;
 const NETWORK_CANDIDATE_TTL_MS = 30 * 60 * 1000;
+const SCAN_SESSION_TIMEOUT_MS = 10 * 60 * 1000;
 const UPLOADABLE_EXTENSIONS = new Set(['mp3', 'm4a', 'wav', 'aac', 'flac', 'ogg', 'opus', 'mp4', 'mov', 'webm']);
 const PLAYLIST_EXTENSIONS = new Set(['m3u8', 'mpd']);
 const SEGMENT_EXTENSIONS = new Set(['ts', 'm4s', 'cmfa', 'cmfv', 'm2ts']);
@@ -27,6 +28,7 @@ const chromeApi = typeof chrome === 'undefined' ? null : chrome;
 
 let listeningTabId = null;
 let listeningTabInfo = null;
+let listeningStartedAt = 0;
 let tabNetworkCandidates = new Map();
 let globalState = {
   phase: 'idle',
@@ -129,15 +131,14 @@ function setupTabLifecycleListeners() {
   chromeApi.tabs.onRemoved.addListener((tabId) => {
     tabNetworkCandidates.delete(tabId);
     if (listeningTabId === tabId) {
-      listeningTabId = null;
-      listeningTabInfo = null;
+      clearListeningSession();
     }
   });
   chromeApi.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (changeInfo.status !== 'loading') return;
     tabNetworkCandidates.delete(tabId);
     if (listeningTabId === tabId) {
-      listeningTabInfo = null;
+      clearListeningSession();
       globalState = { ...globalState, candidates: [] };
     }
   });
@@ -161,6 +162,7 @@ function scanActiveTab() {
 function scanTab(tab) {
   listeningTabId = tab.id;
   listeningTabInfo = { title: tab.title || '', url: tab.url || '' };
+  listeningStartedAt = Date.now();
   dispatchStateChange({
     phase: 'extracting',
     statusText: '正在监听当前网页。请点击网页上的播放按钮，插件会自动收集候选录音。',
@@ -227,6 +229,7 @@ function collectCandidatesFromTab(tab) {
 
 function receivePageCandidates(tab, candidates) {
   if (!tab?.id || !Array.isArray(candidates)) return;
+  if (expireListeningSessionIfNeeded()) return;
   const normalized = candidates.map((candidate) => enrichCandidate(candidate, tab)).filter(Boolean);
   rememberTabCandidates(tab.id, normalized);
   if (tab.id === listeningTabId) {
@@ -236,6 +239,7 @@ function receivePageCandidates(tab, candidates) {
 
 function rememberNetworkCandidate(details) {
   if (!details || details.tabId === undefined || details.tabId < 0) return;
+  if (expireListeningSessionIfNeeded()) return;
   const contentType = headerValue(details.responseHeaders, 'content-type');
   const contentLength = Number(headerValue(details.responseHeaders, 'content-length') || 0);
   const candidate = candidateFromUrl(details.url, `network:${details.type || 'request'}`, {
@@ -249,6 +253,27 @@ function rememberNetworkCandidate(details) {
   if (details.tabId === listeningTabId) {
     dispatchCandidates(mergeCandidates([...globalState.candidates, candidate, ...recentNetworkCandidates(details.tabId)]));
   }
+}
+
+function clearListeningSession() {
+  listeningTabId = null;
+  listeningTabInfo = null;
+  listeningStartedAt = 0;
+}
+
+function expireListeningSessionIfNeeded() {
+  if (!listeningTabId || !listeningStartedAt) return false;
+  if (Date.now() - listeningStartedAt <= SCAN_SESSION_TIMEOUT_MS) return false;
+  clearListeningSession();
+  if (globalState.phase === 'extracting') {
+    dispatchStateChange({
+      phase: 'idle',
+      statusText: '监听已暂停。如需继续，请重新点击“扫描当前网页”。',
+      candidates: globalState.candidates || [],
+      error: '',
+    });
+  }
+  return true;
 }
 
 function rememberTabCandidates(tabId, candidates) {
@@ -480,6 +505,10 @@ function headerValue(headers = [], name) {
 }
 
 function collectMediaCandidates() {
+  const maxCandidates = 50;
+  const maxMediaNodes = 120;
+  const maxHintNodes = 80;
+  const maxPerformanceEntries = 600;
   const uploadableExtensions = ['mp3', 'm4a', 'wav', 'aac', 'flac', 'ogg', 'opus', 'mp4', 'mov', 'webm'];
   const playlistExtensions = ['m3u8', 'mpd'];
   const blockedExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'css', 'js', 'woff', 'woff2', 'ttf', 'html'];
@@ -516,7 +545,12 @@ function collectMediaCandidates() {
 
   function candidateFrom(url, source, meta = {}) {
     if (!url) return null;
-    const absoluteUrl = String(url).startsWith('blob:') ? String(url) : new URL(url, location.href).toString();
+    let absoluteUrl = '';
+    try {
+      absoluteUrl = String(url).startsWith('blob:') ? String(url) : new URL(url, location.href).toString();
+    } catch {
+      return null;
+    }
     if (absoluteUrl.startsWith('blob:')) {
       return {
         url: absoluteUrl,
@@ -570,29 +604,44 @@ function collectMediaCandidates() {
   }
 
   const candidates = [];
-  document.querySelectorAll('audio, video').forEach((media) => {
+  const addCandidate = (candidate) => {
+    if (candidate && candidates.length < maxCandidates) candidates.push(candidate);
+  };
+  const eachLimited = (selector, limit, handler) => {
+    let visited = 0;
+    for (const node of document.querySelectorAll(selector)) {
+      if (visited >= limit || candidates.length >= maxCandidates) break;
+      visited += 1;
+      handler(node);
+    }
+  };
+
+  eachLimited('audio, video', maxMediaNodes, (media) => {
     const candidate = candidateFrom(media.currentSrc || media.src, media.tagName.toLowerCase(), {
       contentType: contentTypeFromElement(media),
     });
-    if (candidate) candidates.push(candidate);
+    addCandidate(candidate);
   });
 
-  document.querySelectorAll('audio source, video source, source[src]').forEach((source) => {
+  eachLimited('audio source, video source, source[src]', maxMediaNodes, (source) => {
     const candidate = candidateFrom(source.src, 'source', { contentType: contentTypeFromElement(source) });
-    if (candidate) candidates.push(candidate);
+    addCandidate(candidate);
   });
 
-  document.querySelectorAll('a[href], link[href], [data-src], [data-url], [data-audio-url]').forEach((node) => {
-    const rawUrl = node.href || node.dataset?.src || node.dataset?.url || node.dataset?.audioUrl;
-    const candidate = candidateFrom(rawUrl, 'page-link');
-    if (candidate) candidates.push(candidate);
+  eachLimited('[data-audio-url], [data-media-url], [data-record-url], a[download][href], link[type^="audio"][href], link[type^="video"][href]', maxHintNodes, (node) => {
+    const rawUrl = node.href || node.dataset?.audioUrl || node.dataset?.mediaUrl || node.dataset?.recordUrl;
+    addCandidate(candidateFrom(rawUrl, 'page-link'));
   });
 
-  window.performance.getEntriesByType('resource').forEach((entry) => {
+  const performanceEntries = window.performance?.getEntriesByType
+    ? window.performance.getEntriesByType('resource').slice(-maxPerformanceEntries)
+    : [];
+  performanceEntries.forEach((entry) => {
+    if (candidates.length >= maxCandidates) return;
     const candidate = candidateFrom(entry.name, `performance:${entry.initiatorType || 'resource'}`, {
       size: entry.transferSize || entry.encodedBodySize || 0,
     });
-    if (candidate) candidates.push(candidate);
+    addCandidate(candidate);
   });
 
   return candidates;
@@ -621,12 +670,19 @@ function installPageMediaObserver() {
   return true;
 
   function collectMediaCandidates() {
+    const maxCandidates = 50;
+    const maxMediaNodes = 120;
     const uploadableExtensions = ['mp3', 'm4a', 'wav', 'aac', 'flac', 'ogg', 'opus', 'mp4', 'mov', 'webm'];
     const blockedExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'css', 'js', 'woff', 'woff2', 'ttf', 'html'];
     const segmentExtensions = ['ts', 'm4s', 'cmfa', 'cmfv', 'm2ts'];
     function candidateFrom(url, source) {
       if (!url) return null;
-      const absoluteUrl = String(url).startsWith('blob:') ? String(url) : new URL(url, location.href).toString();
+      let absoluteUrl = '';
+      try {
+        absoluteUrl = String(url).startsWith('blob:') ? String(url) : new URL(url, location.href).toString();
+      } catch {
+        return null;
+      }
       if (absoluteUrl.startsWith('blob:')) {
         return {
           url: absoluteUrl,
@@ -668,9 +724,15 @@ function installPageMediaObserver() {
         unsupportedReason: '',
       };
     }
-    return Array.from(document.querySelectorAll('audio, video, audio source, video source, source[src]'))
-      .map((node) => candidateFrom(node.currentSrc || node.src, node.tagName.toLowerCase()))
-      .filter(Boolean);
+    const candidates = [];
+    let visited = 0;
+    for (const node of document.querySelectorAll('audio, video, audio source, video source, source[src]')) {
+      if (visited >= maxMediaNodes || candidates.length >= maxCandidates) break;
+      visited += 1;
+      const candidate = candidateFrom(node.currentSrc || node.src, node.tagName.toLowerCase());
+      if (candidate) candidates.push(candidate);
+    }
+    return candidates;
   }
 }
 
