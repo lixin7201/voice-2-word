@@ -1,6 +1,10 @@
 const { buildLocalSummary, buildSummaryPrompt } = require('./templates');
 
-async function generateSummary(config, record, transcriptText, fetchImpl = fetch) {
+async function generateSummary(config, record, transcriptText, context = {}, fetchImpl = fetch) {
+  if (typeof context === 'function') {
+    fetchImpl = context;
+    context = {};
+  }
   const providers = [
     {
       name: 'easyai',
@@ -18,7 +22,7 @@ async function generateSummary(config, record, transcriptText, fetchImpl = fetch
 
   for (const provider of providers) {
     try {
-      const generated = await callChatCompletion(provider, record, transcriptText, fetchImpl);
+      const generated = await callChatCompletion(provider, record, transcriptText, context, fetchImpl);
       return {
         ...generated,
         modelProvider: provider.name,
@@ -46,7 +50,7 @@ async function generateSummary(config, record, transcriptText, fetchImpl = fetch
   };
 }
 
-async function callChatCompletion(provider, record, transcriptText, fetchImpl) {
+async function callChatCompletion(provider, record, transcriptText, context, fetchImpl) {
   const response = await fetchImpl(chatCompletionsUrl(provider.baseUrl), {
     method: 'POST',
     headers: {
@@ -57,7 +61,7 @@ async function callChatCompletion(provider, record, transcriptText, fetchImpl) {
       model: provider.model,
       temperature: 0.2,
       response_format: { type: 'json_object' },
-      messages: buildSummaryPrompt(record, transcriptText),
+      messages: buildSummaryPrompt(record, transcriptText, context),
     }),
   });
   const json = await response.json().catch(() => ({}));
@@ -73,6 +77,7 @@ async function callChatCompletion(provider, record, transcriptText, fetchImpl) {
     summaryMarkdown: parsed.summaryMarkdown,
     structuredJson: parsed.structuredJson || {},
     overviewCard: parsed.overviewCard || {},
+    mindMap: parsed.mindMap || {},
     followupMarkdown: parsed.followupMarkdown || '',
     followupFields: parsed.followupFields || {},
     followupStage: parsed.followupStage || '',
@@ -80,6 +85,7 @@ async function callChatCompletion(provider, record, transcriptText, fetchImpl) {
     statusLabel: parsed.statusLabel || '',
     customerName: parsed.customerName || '',
     companyName: parsed.companyName || '',
+    titleSuggestion: parsed.titleSuggestion || '',
   };
 }
 

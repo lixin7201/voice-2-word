@@ -107,11 +107,20 @@ function resolveRuntimeConfig(baseConfig, store) {
 
 function serializeSystemSettings(baseConfig, store) {
   const runtimeConfig = resolveRuntimeConfig(baseConfig, store);
+  const meta = systemMeta(store);
+  const updatedBy = meta.settings_updated_by
+    ? store.findById('employees', meta.settings_updated_by)
+    : null;
   return {
     groups: SETTING_GROUPS.map((group) => ({
       ...group,
       fields: group.fields.map((field) => serializeField(field, runtimeConfig[field.key])),
     })),
+    meta: {
+      settingsVersion: Number(meta.settings_version || 1),
+      settingsUpdatedAt: meta.settings_updated_at || '',
+      settingsUpdatedBy: updatedBy ? updatedBy.display_name : '',
+    },
     status: {
       publicBaseUrl: runtimeConfig.publicBaseUrl,
       devFakeAsr: Boolean(runtimeConfig.devFakeAsr),
@@ -137,6 +146,7 @@ function saveSystemSettings(store, body, actorEmployeeId) {
       upsertStoredSetting(store, key, value, actorEmployeeId, field.secret);
     }
   }
+  bumpSettingsVersion(store, actorEmployeeId);
 }
 
 function serializeField(field, value) {
@@ -161,6 +171,30 @@ function serializeField(field, value) {
 function storedSettings(store) {
   const rows = store.table('system_settings');
   return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+}
+
+function systemMeta(store) {
+  let meta = store.table('system_meta')[0];
+  if (!meta) {
+    meta = store.insert('system_meta', {
+      id: 'system-meta',
+      schema_version: 2,
+      settings_version: 1,
+      settings_updated_at: '',
+      settings_updated_by: null,
+    });
+  }
+  return meta;
+}
+
+function bumpSettingsVersion(store, actorEmployeeId) {
+  const meta = systemMeta(store);
+  store.update('system_meta', meta.id, {
+    schema_version: 2,
+    settings_version: Number(meta.settings_version || 1) + 1,
+    settings_updated_at: new Date().toISOString(),
+    settings_updated_by: actorEmployeeId || null,
+  });
 }
 
 function upsertStoredSetting(store, key, value, actorEmployeeId, isSecret) {

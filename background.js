@@ -1,13 +1,27 @@
 const DEFAULT_API_BASE_URL = 'http://lixindemac-studio.local:8127';
-const MAX_CANDIDATES = 50;
+const MAX_CANDIDATES = 12;
 const MAX_NETWORK_CANDIDATES_PER_TAB = 80;
 const NETWORK_CANDIDATE_TTL_MS = 30 * 60 * 1000;
 const SCAN_SESSION_TIMEOUT_MS = 10 * 60 * 1000;
+const LOW_CONFIDENCE_MEDIA_BYTES = 50 * 1024;
+const BINARY_RECORDING_BYTES = 128 * 1024;
 const UPLOADABLE_EXTENSIONS = new Set(['mp3', 'm4a', 'wav', 'aac', 'flac', 'ogg', 'opus', 'mp4', 'mov', 'webm']);
 const PLAYLIST_EXTENSIONS = new Set(['m3u8', 'mpd']);
 const SEGMENT_EXTENSIONS = new Set(['ts', 'm4s', 'cmfa', 'cmfv', 'm2ts']);
 const BLOCKED_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'css', 'js', 'woff', 'woff2', 'ttf', 'html']);
 const BLOCKED_CONTENT_TYPES = ['image/', 'font/', 'text/css', 'text/html', 'application/javascript', 'text/javascript'];
+const BINARY_MEDIA_CONTENT_TYPES = ['application/octet-stream', 'binary/octet-stream', 'application/x-binary'];
+const MEDIA_URL_HINTS = [
+  '/audio',
+  '/media',
+  '/record',
+  '/recording',
+  '/voice',
+  '/download',
+  '/file',
+  '/object',
+];
+const UNVERIFIED_MEDIA_REASON = '这个地址缺少可确认的音频文件信息，暂不能直接读取。请先在原网页播放录音，或下载录音后手动上传。';
 const CONTENT_TYPE_EXTENSION_MAP = {
   'audio/mpeg': 'mp3',
   'audio/mp3': 'mp3',
@@ -25,10 +39,12 @@ const CONTENT_TYPE_EXTENSION_MAP = {
 };
 
 const chromeApi = typeof chrome === 'undefined' ? null : chrome;
+const serviceWorkerStartedAt = new Date().toISOString();
 
 let listeningTabId = null;
 let listeningTabInfo = null;
 let listeningStartedAt = 0;
+let lastScanError = '';
 let tabNetworkCandidates = new Map();
 let globalState = {
   phase: 'idle',
@@ -78,9 +94,15 @@ function setupExtensionRuntime() {
       return false;
     }
 
+    if (request.type === 'GET_DIAGNOSTICS') {
+      sendResponse(getDiagnostics());
+      return false;
+    }
+
     if (request.type === 'SCAN_PAGE') {
       scanActiveTab();
-      return true;
+      sendResponse({ ok: true });
+      return false;
     }
 
     if (request.type === 'PAGE_MEDIA_CANDIDATES') {
@@ -102,9 +124,25 @@ function setupExtensionRuntime() {
 
 function dispatchStateChange(updates = {}) {
   globalState = { ...globalState, ...updates };
+  if (globalState.phase === 'error' || updates.error) {
+    lastScanError = updates.error || globalState.error || '';
+  }
   chromeApi.runtime.sendMessage({ type: 'STATE_UPDATE', state: globalState }).catch(() => {
     // Side panel may be closed.
   });
+}
+
+function getDiagnostics() {
+  return {
+    listeningTabId,
+    listeningStartedAt: listeningStartedAt ? new Date(listeningStartedAt).toISOString() : '',
+    globalStatePhase: globalState.phase,
+    statusText: globalState.statusText,
+    candidatesCount: Array.isArray(globalState.candidates) ? globalState.candidates.length : 0,
+    lastScanError,
+    serviceWorkerStartedAt,
+    extensionVersion: chromeApi?.runtime?.getManifest?.().version || '',
+  };
 }
 
 function setupContextMenu() {
@@ -163,6 +201,7 @@ function scanTab(tab) {
   listeningTabId = tab.id;
   listeningTabInfo = { title: tab.title || '', url: tab.url || '' };
   listeningStartedAt = Date.now();
+  tabNetworkCandidates.set(tab.id, []);
   dispatchStateChange({
     phase: 'extracting',
     statusText: '正在监听当前网页。请点击网页上的播放按钮，插件会自动收集候选录音。',
@@ -231,6 +270,10 @@ function receivePageCandidates(tab, candidates) {
   if (!tab?.id || !Array.isArray(candidates)) return;
   if (expireListeningSessionIfNeeded()) return;
   const normalized = candidates.map((candidate) => enrichCandidate(candidate, tab)).filter(Boolean);
+  const recordingTitle = normalized.find((candidate) => candidate.recordingTitle)?.recordingTitle;
+  if (recordingTitle && tab.id === listeningTabId) {
+    listeningTabInfo = { ...(listeningTabInfo || {}), recordingTitle };
+  }
   rememberTabCandidates(tab.id, normalized);
   if (tab.id === listeningTabId) {
     dispatchCandidates(mergeCandidates([...globalState.candidates, ...normalized, ...recentNetworkCandidates(tab.id)]));
@@ -241,11 +284,16 @@ function rememberNetworkCandidate(details) {
   if (!details || details.tabId === undefined || details.tabId < 0) return;
   if (expireListeningSessionIfNeeded()) return;
   const contentType = headerValue(details.responseHeaders, 'content-type');
-  const contentLength = Number(headerValue(details.responseHeaders, 'content-length') || 0);
+  const contentDisposition = headerValue(details.responseHeaders, 'content-disposition');
+  const responseSize = sizeFromResponseHeaders(details.responseHeaders);
   const candidate = candidateFromUrl(details.url, `network:${details.type || 'request'}`, {
     contentType,
-    size: contentLength,
-    pageUrl: details.initiator || '',
+    contentDisposition,
+    size: responseSize.size,
+    rangeSize: responseSize.rangeSize,
+    pageTitle: listeningTabInfo?.title || '',
+    pageUrl: listeningTabInfo?.url || details.initiator || '',
+    recordingTitle: listeningTabInfo?.recordingTitle || '',
     foundAt: new Date().toISOString(),
   });
   if (!candidate) return;
@@ -295,10 +343,23 @@ function isExpiredCandidate(candidate) {
 }
 
 function dispatchCandidates(candidates) {
-  const visible = mergeCandidates(candidates).slice(0, MAX_CANDIDATES);
+  const visible = mergeCandidates(candidates)
+    .map((candidate) => ({
+      ...candidate,
+      recordingTitle: candidate.recordingTitle || listeningTabInfo?.recordingTitle || '',
+      pageTitle: candidate.pageTitle || listeningTabInfo?.title || '',
+      pageUrl: candidate.pageUrl || listeningTabInfo?.url || '',
+    }))
+    .slice(0, MAX_CANDIDATES);
+  const extraCount = Math.max(0, visible.length - 1);
+  const readableCount = visible.filter((candidate) => candidate.uploadable !== false).length;
   dispatchStateChange({
     phase: 'confirm',
-    statusText: `发现 ${visible.length} 个候选录音，请确认后进入上传识别。`,
+    statusText: readableCount === 0
+      ? '发现了网页候选线索，但还没有锁定可直接读取的录音。请在原网页播放录音，或改用手动上传。'
+      : extraCount
+      ? `已找到当前页录音，另有 ${extraCount} 个低可信候选已折叠。`
+      : '已找到当前页录音，可以开始识别。',
     url: visible[0]?.url || null,
     candidates: visible,
     error: '',
@@ -323,9 +384,30 @@ function mergeCandidates(candidates) {
 function candidateScore(candidate) {
   let score = Number(candidate.size || 0);
   if (candidate.uploadable) score += 10_000_000_000;
+  if (candidate.lowConfidence) score -= 1_000_000;
+  if (candidate.current && candidate.uploadable !== false) score += 20_000_000_000;
+  if (candidate.current && candidate.uploadable === false) score += 500_000;
+  if (candidate.recordingTitle) score += 250_000;
   if (candidate.source?.startsWith('network')) score += 1_000_000;
   if (candidate.contentType) score += 100_000;
   return score;
+}
+
+function sizeFromResponseHeaders(headers = []) {
+  const contentLength = Number(headerValue(headers, 'content-length') || 0);
+  const rangeSize = totalSizeFromContentRange(headerValue(headers, 'content-range'));
+  return {
+    size: Math.max(contentLength || 0, rangeSize || 0),
+    contentLength: contentLength || 0,
+    rangeSize: rangeSize || 0,
+  };
+}
+
+function totalSizeFromContentRange(value) {
+  const match = String(value || '').match(/\/(\d+)\s*$/);
+  if (!match) return 0;
+  const total = Number(match[1]);
+  return Number.isFinite(total) ? total : 0;
 }
 
 function stripQuery(url) {
@@ -383,6 +465,7 @@ function enrichCandidate(candidate, tab) {
     ...normalized,
     pageTitle: normalized.pageTitle || tab.title || listeningTabInfo?.title || '',
     pageUrl: normalized.pageUrl || tab.url || listeningTabInfo?.url || '',
+    recordingTitle: normalized.recordingTitle || listeningTabInfo?.recordingTitle || '',
   };
 }
 
@@ -399,6 +482,10 @@ function candidateFromUrl(url, source, metadata = {}) {
       contentType: metadata.contentType || '',
       pageTitle: metadata.pageTitle || '',
       pageUrl: metadata.pageUrl || '',
+      recordingTitle: metadata.recordingTitle || '',
+      current: Boolean(metadata.current),
+      durationSeconds: Number(metadata.durationSeconds || 0),
+      currentTimeSeconds: Number(metadata.currentTimeSeconds || 0),
       foundAt: metadata.foundAt || new Date().toISOString(),
       uploadable: false,
       unsupportedReason: '这是网页临时 blob 地址，需要捕获它背后的网络音频请求。',
@@ -410,42 +497,79 @@ function candidateFromUrl(url, source, metadata = {}) {
   if (isBlockedContentType(contentType)) return null;
 
   const ext = extensionFromUrl(stringUrl);
+  const dispositionName = fileNameFromContentDisposition(metadata.contentDisposition);
+  const dispositionExt = extensionFromFileName(dispositionName);
   if (BLOCKED_EXTENSIONS.has(ext)) return null;
   if (SEGMENT_EXTENSIONS.has(ext) || contentType === 'video/mp2t') return null;
 
   const lowerUrl = stringUrl.toLowerCase();
   const mappedExt = CONTENT_TYPE_EXTENSION_MAP[contentType] || '';
-  const type = ext || mappedExt || mediaTypeFromUrl(lowerUrl) || 'media';
+  const type = ext || dispositionExt || mappedExt || mediaTypeFromUrl(lowerUrl) || 'media';
   const playlist = PLAYLIST_EXTENSIONS.has(ext) || isPlaylistContentType(contentType);
-  const looksLikeMedia =
+  const size = Number(metadata.size || 0);
+  const hasDirectFileEvidence =
     UPLOADABLE_EXTENSIONS.has(ext) ||
-    Boolean(mappedExt) ||
-    playlist ||
-    lowerUrl.includes('/audio') ||
-    lowerUrl.includes('/media') ||
-    lowerUrl.includes('audio') ||
-    lowerUrl.includes('record') ||
-    lowerUrl.includes('voice') ||
+    UPLOADABLE_EXTENSIONS.has(dispositionExt) ||
+    Boolean(mappedExt);
+  const hasPlayablePageSource =
     source === 'audio' ||
     source === 'video' ||
+    source === 'source' ||
+    source === 'current-player';
+  const probablyBinaryRecording =
+    source.startsWith('network:') &&
+    BINARY_MEDIA_CONTENT_TYPES.includes(contentType) &&
+    size > BINARY_RECORDING_BYTES &&
+    !ext;
+  const probablyNetworkMediaRecording =
+    source.startsWith('network:media') &&
+    size > BINARY_RECORDING_BYTES &&
+    !ext;
+  const hintOnly = !hasDirectFileEvidence && !probablyBinaryRecording && !probablyNetworkMediaRecording && !hasPlayablePageSource && !playlist;
+  const looksLikeMedia =
+    hasDirectFileEvidence ||
+    playlist ||
+    hasMediaUrlHint(lowerUrl) ||
+    probablyBinaryRecording ||
+    probablyNetworkMediaRecording ||
+    hasPlayablePageSource ||
     source.startsWith('network:media');
 
   if (!looksLikeMedia) return null;
+  if (hintOnly && size > 0 && size < LOW_CONFIDENCE_MEDIA_BYTES) return null;
 
-  const uploadable = !playlist;
+  const uploadable = !playlist && !hintOnly;
   return {
     url: stringUrl,
     source,
-    name: candidateName(stringUrl, type),
+    name: candidateName(stringUrl, type, dispositionName),
     type,
-    size: Number(metadata.size || 0),
+    size,
+    rangeSize: Number(metadata.rangeSize || 0),
     contentType,
     pageTitle: metadata.pageTitle || '',
     pageUrl: metadata.pageUrl || '',
+    recordingTitle: metadata.recordingTitle || '',
+    current: Boolean(metadata.current),
+    durationSeconds: Number(metadata.durationSeconds || 0),
+    currentTimeSeconds: Number(metadata.currentTimeSeconds || 0),
     foundAt: metadata.foundAt || new Date().toISOString(),
     uploadable,
-    unsupportedReason: uploadable ? '' : '这是播放列表或分片流，当前不能直接上传为单个录音文件。',
+    lowConfidence: hintOnly,
+    unsupportedReason: playlist
+      ? '这是播放列表或分片流，当前不能直接上传为单个录音文件。'
+      : (uploadable ? '' : UNVERIFIED_MEDIA_REASON),
   };
+}
+
+function hasMediaUrlHint(lowerUrl) {
+  try {
+    const parsed = new URL(lowerUrl);
+    const path = parsed.pathname.toLowerCase();
+    return MEDIA_URL_HINTS.some((hint) => path.includes(hint));
+  } catch {
+    return MEDIA_URL_HINTS.some((hint) => String(lowerUrl || '').includes(hint));
+  }
 }
 
 function normalizeContentType(value) {
@@ -479,6 +603,27 @@ function extensionFromUrl(url) {
   }
 }
 
+function extensionFromFileName(fileName) {
+  const last = String(fileName || '').split('/').pop() || '';
+  const ext = last.includes('.') ? last.split('.').pop() : '';
+  return ext.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function fileNameFromContentDisposition(value) {
+  const text = String(value || '');
+  if (!text) return '';
+  const utf8Match = text.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match) {
+    try {
+      return decodeURIComponent(utf8Match[1].trim().replace(/^"|"$/g, ''));
+    } catch {
+      return utf8Match[1].trim().replace(/^"|"$/g, '');
+    }
+  }
+  const plainMatch = text.match(/filename="?([^";]+)"?/i);
+  return plainMatch ? plainMatch[1].trim() : '';
+}
+
 function mediaTypeFromUrl(lowerUrl) {
   if (lowerUrl.includes('.mp3')) return 'mp3';
   if (lowerUrl.includes('.m4a')) return 'm4a';
@@ -488,12 +633,13 @@ function mediaTypeFromUrl(lowerUrl) {
   return '';
 }
 
-function candidateName(url, type) {
+function candidateName(url, type, fallbackName = '') {
   let base = '网页录音';
+  if (fallbackName) base = fallbackName;
   try {
-    base = decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() || base);
+    if (!fallbackName) base = decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() || base);
   } catch {
-    base = String(url).split('?')[0].split('/').filter(Boolean).pop() || base;
+    if (!fallbackName) base = String(url).split('?')[0].split('/').filter(Boolean).pop() || base;
   }
   if (!base.includes('.') && UPLOADABLE_EXTENSIONS.has(type)) return `${base}.${type}`;
   return base;
@@ -528,6 +674,11 @@ function collectMediaCandidates() {
     'video/quicktime': 'mov',
     'video/webm': 'webm',
   };
+  const mediaUrlHints = ['/audio', '/media', '/record', '/recording', '/voice', '/download', '/file', '/object'];
+  const lowConfidenceMediaBytes = 50 * 1024;
+  const unverifiedMediaReason = '这个地址缺少可确认的音频文件信息，暂不能直接读取。请先在原网页播放录音，或下载录音后手动上传。';
+  const pageRecordingTitle = detectPageRecordingTitle();
+  const listenStartedAt = Number(window.__dayibinListenStartedAt || 0);
 
   function extensionFrom(url) {
     try {
@@ -541,6 +692,35 @@ function collectMediaCandidates() {
 
   function contentTypeFromElement(element) {
     return String(element.type || '').split(';')[0].trim().toLowerCase();
+  }
+
+  function hasMediaHint(url) {
+    try {
+      const pathname = new URL(url, location.href).pathname.toLowerCase();
+      return mediaUrlHints.some((hint) => pathname.includes(hint));
+    } catch {
+      return mediaUrlHints.some((hint) => String(url || '').toLowerCase().includes(hint));
+    }
+  }
+
+  function isCurrentMedia(media) {
+    return Boolean(
+      media &&
+      !media.ended &&
+      (media.currentTime > 0 || (!media.paused && media.readyState > 1))
+    );
+  }
+
+  function detectPageRecordingTitle() {
+    const text = (document.body?.innerText || '').split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 80);
+    const dated = text.find((line) => /20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}/.test(line) && /\d{1,2}:\d{2}/.test(line));
+    if (dated) return dated.replace(/\s+/g, ' ').slice(0, 80);
+    const fileName = text.find((line) => /\.(mp3|m4a|wav|aac|flac|ogg|opus|mp4|mov|webm)\b/i.test(line));
+    if (fileName) return fileName.slice(0, 100);
+    return '';
   }
 
   function candidateFrom(url, source, meta = {}) {
@@ -561,6 +741,10 @@ function collectMediaCandidates() {
         contentType: meta.contentType || '',
         pageTitle: document.title,
         pageUrl: location.href,
+        recordingTitle: meta.recordingTitle || pageRecordingTitle,
+        current: Boolean(meta.current),
+        durationSeconds: Number(meta.durationSeconds || 0),
+        currentTimeSeconds: Number(meta.currentTimeSeconds || 0),
         foundAt: new Date().toISOString(),
         uploadable: false,
         unsupportedReason: '这是网页临时 blob 地址，需要捕获它背后的网络音频请求。',
@@ -574,32 +758,37 @@ function collectMediaCandidates() {
     const mappedExt = contentTypeExtensionMap[contentType] || '';
     const type = ext || mappedExt || (lowerUrl.includes('.mp3') ? 'mp3' : '') || 'media';
     const playlist = playlistExtensions.includes(ext) || ['application/vnd.apple.mpegurl', 'application/x-mpegurl', 'application/dash+xml'].includes(contentType);
+    const size = Number(meta.size || 0);
+    const hasDirectFileEvidence = uploadableExtensions.includes(ext) || Boolean(mappedExt);
+    const hasPlayablePageSource = source === 'audio' || source === 'video' || source === 'source' || source === 'current-player';
+    const hintOnly = !hasDirectFileEvidence && !hasPlayablePageSource && !playlist;
     const looksLikeMedia =
-      uploadableExtensions.includes(ext) ||
-      Boolean(mappedExt) ||
+      hasDirectFileEvidence ||
       playlist ||
-      lowerUrl.includes('/audio') ||
-      lowerUrl.includes('/media') ||
-      lowerUrl.includes('audio') ||
-      lowerUrl.includes('record') ||
-      lowerUrl.includes('voice') ||
-      source === 'audio' ||
-      source === 'video';
+      hasMediaHint(absoluteUrl) ||
+      hasPlayablePageSource;
     if (!looksLikeMedia) return null;
+    if (hintOnly && size > 0 && size < lowConfidenceMediaBytes) return null;
     let name = decodeURIComponent(new URL(absoluteUrl).pathname.split('/').filter(Boolean).pop() || '网页录音');
     if (!name.includes('.') && uploadableExtensions.includes(type)) name = `${name}.${type}`;
+    const uploadable = !playlist && !hintOnly;
     return {
       url: absoluteUrl,
       source,
       name,
       type,
-      size: Number(meta.size || 0),
+      size,
       contentType,
       pageTitle: document.title,
       pageUrl: location.href,
+      recordingTitle: meta.recordingTitle || pageRecordingTitle,
+      current: Boolean(meta.current),
+      durationSeconds: Number(meta.durationSeconds || 0),
+      currentTimeSeconds: Number(meta.currentTimeSeconds || 0),
       foundAt: new Date().toISOString(),
-      uploadable: !playlist,
-      unsupportedReason: playlist ? '这是播放列表或分片流，当前不能直接上传为单个录音文件。' : '',
+      uploadable,
+      lowConfidence: hintOnly,
+      unsupportedReason: playlist ? '这是播放列表或分片流，当前不能直接上传为单个录音文件。' : (uploadable ? '' : unverifiedMediaReason),
     };
   }
 
@@ -617,8 +806,12 @@ function collectMediaCandidates() {
   };
 
   eachLimited('audio, video', maxMediaNodes, (media) => {
-    const candidate = candidateFrom(media.currentSrc || media.src, media.tagName.toLowerCase(), {
+    const current = isCurrentMedia(media);
+    const candidate = candidateFrom(media.currentSrc || media.src, current ? 'current-player' : media.tagName.toLowerCase(), {
       contentType: contentTypeFromElement(media),
+      current,
+      durationSeconds: Number.isFinite(media.duration) ? media.duration : 0,
+      currentTimeSeconds: Number.isFinite(media.currentTime) ? media.currentTime : 0,
     });
     addCandidate(candidate);
   });
@@ -628,13 +821,15 @@ function collectMediaCandidates() {
     addCandidate(candidate);
   });
 
-  eachLimited('[data-audio-url], [data-media-url], [data-record-url], a[download][href], link[type^="audio"][href], link[type^="video"][href]', maxHintNodes, (node) => {
-    const rawUrl = node.href || node.dataset?.audioUrl || node.dataset?.mediaUrl || node.dataset?.recordUrl;
+  eachLimited('[data-audio-url], [data-media-url], [data-record-url], [data-recording-url], [data-file-url], [data-src], a[download][href], a[href*="audio"], a[href*="record"], a[href*="voice"], link[type^="audio"][href], link[type^="video"][href]', maxHintNodes, (node) => {
+    const rawUrl = node.href || node.dataset?.audioUrl || node.dataset?.mediaUrl || node.dataset?.recordUrl || node.dataset?.recordingUrl || node.dataset?.fileUrl || node.dataset?.src;
     addCandidate(candidateFrom(rawUrl, 'page-link'));
   });
 
   const performanceEntries = window.performance?.getEntriesByType
-    ? window.performance.getEntriesByType('resource').slice(-maxPerformanceEntries)
+    ? window.performance.getEntriesByType('resource')
+      .filter((entry) => !listenStartedAt || entry.startTime >= listenStartedAt - 1500)
+      .slice(-maxPerformanceEntries)
     : [];
   performanceEntries.forEach((entry) => {
     if (candidates.length >= maxCandidates) return;
@@ -648,7 +843,13 @@ function collectMediaCandidates() {
 }
 
 function installPageMediaObserver() {
-  if (window.__dayibinMediaObserverInstalled) return true;
+  window.__dayibinListenStartedAt = window.performance?.now ? window.performance.now() : 0;
+  if (window.__dayibinMediaObserverInstalled) {
+    if (typeof window.__dayibinSendMediaCandidates === 'function') {
+      window.__dayibinSendMediaCandidates();
+    }
+    return true;
+  }
   window.__dayibinMediaObserverInstalled = true;
 
   const sendCandidates = () => {
@@ -662,20 +863,80 @@ function installPageMediaObserver() {
       // Page may block access while navigating.
     }
   };
+  window.__dayibinSendMediaCandidates = sendCandidates;
+
+  let pendingTimer = 0;
+  const scheduleSend = () => {
+    window.clearTimeout(pendingTimer);
+    pendingTimer = window.setTimeout(sendCandidates, 250);
+  };
 
   document.addEventListener('play', sendCandidates, true);
+  document.addEventListener('playing', sendCandidates, true);
   document.addEventListener('loadedmetadata', sendCandidates, true);
+  document.addEventListener('loadeddata', sendCandidates, true);
+  document.addEventListener('canplay', sendCandidates, true);
   document.addEventListener('durationchange', sendCandidates, true);
+  try {
+    const observer = new MutationObserver(scheduleSend);
+    observer.observe(document.documentElement || document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['src', 'href', 'data-audio-url', 'data-media-url', 'data-record-url'],
+    });
+  } catch {
+    // Some pages block observers during navigation.
+  }
   window.setTimeout(sendCandidates, 300);
+  window.setTimeout(sendCandidates, 1200);
   return true;
 
   function collectMediaCandidates() {
     const maxCandidates = 50;
     const maxMediaNodes = 120;
+    const maxHintNodes = 80;
+    const maxPerformanceEntries = 600;
     const uploadableExtensions = ['mp3', 'm4a', 'wav', 'aac', 'flac', 'ogg', 'opus', 'mp4', 'mov', 'webm'];
+    const playlistExtensions = ['m3u8', 'mpd'];
     const blockedExtensions = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'css', 'js', 'woff', 'woff2', 'ttf', 'html'];
     const segmentExtensions = ['ts', 'm4s', 'cmfa', 'cmfv', 'm2ts'];
-    function candidateFrom(url, source) {
+    const mediaUrlHints = ['/audio', '/media', '/record', '/recording', '/voice', '/download', '/file', '/object'];
+    const lowConfidenceMediaBytes = 50 * 1024;
+    const unverifiedMediaReason = '这个地址缺少可确认的音频文件信息，暂不能直接读取。请先在原网页播放录音，或下载录音后手动上传。';
+    const pageRecordingTitle = detectPageRecordingTitle();
+    const listenStartedAt = Number(window.__dayibinListenStartedAt || 0);
+
+    function hasMediaHint(url) {
+      try {
+        const pathname = new URL(url, location.href).pathname.toLowerCase();
+        return mediaUrlHints.some((hint) => pathname.includes(hint));
+      } catch {
+        return mediaUrlHints.some((hint) => String(url || '').toLowerCase().includes(hint));
+      }
+    }
+
+    function isCurrentMedia(media) {
+      return Boolean(
+        media &&
+        !media.ended &&
+        (media.currentTime > 0 || (!media.paused && media.readyState > 1))
+      );
+    }
+
+    function detectPageRecordingTitle() {
+      const text = (document.body?.innerText || '').split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(0, 80);
+      const dated = text.find((line) => /20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}/.test(line) && /\d{1,2}:\d{2}/.test(line));
+      if (dated) return dated.replace(/\s+/g, ' ').slice(0, 80);
+      const fileName = text.find((line) => /\.(mp3|m4a|wav|aac|flac|ogg|opus|mp4|mov|webm)\b/i.test(line));
+      if (fileName) return fileName.slice(0, 100);
+      return '';
+    }
+
+    function candidateFrom(url, source, meta = {}) {
       if (!url) return null;
       let absoluteUrl = '';
       try {
@@ -689,8 +950,13 @@ function installPageMediaObserver() {
           source,
           name: '网页临时音频',
           type: 'blob',
+          size: Number(meta.size || 0),
           pageTitle: document.title,
           pageUrl: location.href,
+          recordingTitle: meta.recordingTitle || pageRecordingTitle,
+          current: Boolean(meta.current),
+          durationSeconds: Number(meta.durationSeconds || 0),
+          currentTimeSeconds: Number(meta.currentTimeSeconds || 0),
           foundAt: new Date().toISOString(),
           uploadable: false,
           unsupportedReason: '这是网页临时 blob 地址，需要捕获它背后的网络音频请求。',
@@ -702,36 +968,74 @@ function installPageMediaObserver() {
       const ext = last.includes('.') ? last.split('.').pop().replace(/[^a-z0-9]/g, '') : '';
       if (blockedExtensions.includes(ext) || segmentExtensions.includes(ext)) return null;
       const lowerUrl = absoluteUrl.toLowerCase();
+      const contentType = String(meta.contentType || '').split(';')[0].trim().toLowerCase();
+      const playlist = playlistExtensions.includes(ext) || ['application/vnd.apple.mpegurl', 'application/x-mpegurl', 'application/dash+xml'].includes(contentType);
+      const size = Number(meta.size || 0);
+      const hasDirectFileEvidence = uploadableExtensions.includes(ext);
+      const hasPlayablePageSource = source === 'audio' || source === 'video' || source === 'source' || source === 'current-player';
+      const hintOnly = !hasDirectFileEvidence && !hasPlayablePageSource && !playlist;
       const looksLikeMedia =
-        uploadableExtensions.includes(ext) ||
-        lowerUrl.includes('/audio') ||
-        lowerUrl.includes('/media') ||
-        lowerUrl.includes('audio') ||
-        lowerUrl.includes('record') ||
-        lowerUrl.includes('voice') ||
-        source === 'audio' ||
-        source === 'video';
+        hasDirectFileEvidence ||
+        playlist ||
+        hasMediaHint(absoluteUrl) ||
+        hasPlayablePageSource;
       if (!looksLikeMedia) return null;
+      if (hintOnly && size > 0 && size < lowConfidenceMediaBytes) return null;
+      const uploadable = !playlist && !hintOnly;
       return {
         url: absoluteUrl,
         source,
         name: decodeURIComponent(last || '网页录音'),
         type: ext || 'media',
+        size,
+        contentType,
         pageTitle: document.title,
         pageUrl: location.href,
+        recordingTitle: meta.recordingTitle || pageRecordingTitle,
+        current: Boolean(meta.current),
+        durationSeconds: Number(meta.durationSeconds || 0),
+        currentTimeSeconds: Number(meta.currentTimeSeconds || 0),
         foundAt: new Date().toISOString(),
-        uploadable: true,
-        unsupportedReason: '',
+        uploadable,
+        lowConfidence: hintOnly,
+        unsupportedReason: playlist ? '这是播放列表或分片流，当前不能直接上传为单个录音文件。' : (uploadable ? '' : unverifiedMediaReason),
       };
     }
     const candidates = [];
-    let visited = 0;
-    for (const node of document.querySelectorAll('audio, video, audio source, video source, source[src]')) {
-      if (visited >= maxMediaNodes || candidates.length >= maxCandidates) break;
-      visited += 1;
-      const candidate = candidateFrom(node.currentSrc || node.src, node.tagName.toLowerCase());
-      if (candidate) candidates.push(candidate);
-    }
+    const addCandidate = (candidate) => {
+      if (candidate && candidates.length < maxCandidates) candidates.push(candidate);
+    };
+    const eachLimited = (selector, limit, handler) => {
+      let visited = 0;
+      for (const node of document.querySelectorAll(selector)) {
+        if (visited >= limit || candidates.length >= maxCandidates) break;
+        visited += 1;
+        handler(node);
+      }
+    };
+    eachLimited('audio, video, audio source, video source, source[src]', maxMediaNodes, (node) => {
+      const tagName = node.tagName.toLowerCase();
+      const current = tagName === 'audio' || tagName === 'video' ? isCurrentMedia(node) : false;
+      addCandidate(candidateFrom(node.currentSrc || node.src, current ? 'current-player' : tagName, {
+        contentType: node.type || '',
+        current,
+        durationSeconds: Number.isFinite(node.duration) ? node.duration : 0,
+        currentTimeSeconds: Number.isFinite(node.currentTime) ? node.currentTime : 0,
+      }));
+    });
+    eachLimited('[data-audio-url], [data-media-url], [data-record-url], [data-recording-url], [data-file-url], [data-src], a[download][href], a[href*="audio"], a[href*="record"], a[href*="voice"]', maxHintNodes, (node) => {
+      addCandidate(candidateFrom(node.href || node.dataset?.audioUrl || node.dataset?.mediaUrl || node.dataset?.recordUrl || node.dataset?.recordingUrl || node.dataset?.fileUrl || node.dataset?.src, 'page-link'));
+    });
+    const performanceEntries = window.performance?.getEntriesByType
+      ? window.performance.getEntriesByType('resource')
+        .filter((entry) => !listenStartedAt || entry.startTime >= listenStartedAt - 1500)
+        .slice(-maxPerformanceEntries)
+      : [];
+    performanceEntries.forEach((entry) => {
+      addCandidate(candidateFrom(entry.name, `performance:${entry.initiatorType || 'resource'}`, {
+        size: entry.transferSize || entry.encodedBodySize || 0,
+      }));
+    });
     return candidates;
   }
 }
@@ -741,9 +1045,12 @@ if (typeof module !== 'undefined' && module.exports) {
     candidateKey,
     candidateFromUrl,
     extensionFromUrl,
+    getDiagnostics,
     headerValue,
     isVolatileQueryParam,
     mergeCandidates,
+    sizeFromResponseHeaders,
     stripQuery,
+    totalSizeFromContentRange,
   };
 }

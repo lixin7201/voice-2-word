@@ -84,6 +84,12 @@ function createInitialData(now = new Date().toISOString()) {
     password_hash: hashPassword('dayibin'),
     global_role: globalRoleFor(name),
     status: 'active',
+    avatar_url: '',
+    avatar_r2_key: '',
+    avatar_color: avatarColorFor(name),
+    bio: '',
+    ai_profile_note: '',
+    profile_updated_at: '',
     last_login_at: null,
     created_at: now,
     updated_at: now,
@@ -114,8 +120,18 @@ function createInitialData(now = new Date().toISOString()) {
     summaries: [],
     followup_forms: [],
     record_notes: [],
+    record_processing_events: [],
     export_files: [],
     system_settings: [],
+    system_meta: [{
+      id: 'system-meta',
+      schema_version: 2,
+      settings_version: 1,
+      settings_updated_at: '',
+      settings_updated_by: null,
+      created_at: now,
+      updated_at: now,
+    }],
     audit_logs: [],
     ztools_daily_digest_queue: [],
   };
@@ -136,6 +152,13 @@ function memberRow(employeeId, departmentId, memberRole, now) {
     member_role: memberRole,
     created_at: now,
   };
+}
+
+function avatarColorFor(seed) {
+  const colors = ['#2e7bbd', '#1b9a8a', '#7a5af8', '#c47f1a', '#25855a', '#b0446b'];
+  let total = 0;
+  for (const char of String(seed || '')) total += char.charCodeAt(0);
+  return colors[total % colors.length];
 }
 
 module.exports = {

@@ -115,17 +115,20 @@ body.web-workbench .login-card {
 
 body.web-workbench:not([data-view="login"]):not([data-view="loading"]) .app-shell {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
   padding: 22px 0 28px;
 }
 
 body.web-workbench .topbar {
   position: sticky;
   top: 0;
-  grid-column: 1 / -1;
+  grid-column: 1;
   margin: 0;
+  min-height: 96px;
   border-color: var(--workbench-border);
+  border-bottom: 0;
+  border-radius: 16px 16px 0 0;
   background: color-mix(in oklch, var(--workbench-surface) 92%, transparent);
   box-shadow: none;
   backdrop-filter: blur(14px);
@@ -137,40 +140,53 @@ body.web-workbench .brand-title {
 
 body.web-workbench .nav {
   position: sticky;
-  top: 92px;
-  align-self: start;
-  display: flex;
-  flex-direction: column;
+  top: 96px;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   grid-column: 1;
-  gap: 6px;
-  margin: 0;
+  gap: 0;
+  margin: 0 0 22px;
   border: 1px solid var(--workbench-border);
-  border-radius: 8px;
+  border-top: 0;
+  border-radius: 0 0 16px 16px;
   background: color-mix(in oklch, var(--workbench-surface) 86%, var(--workbench-soft));
-  padding: 12px;
+  padding: 0 20px;
 }
 
 body.web-workbench .nav button {
-  justify-content: flex-start;
-  min-height: 42px;
+  position: relative;
+  min-height: 72px;
   border: 0;
+  border-radius: 0;
   background: transparent;
   color: var(--workbench-muted);
-  text-align: left;
+  text-align: center;
   font-weight: 750;
 }
 
 body.web-workbench .nav button.active,
 body.web-workbench .nav button:hover {
-  background: color-mix(in oklch, var(--workbench-accent) 12%, white);
+  background: transparent;
   color: var(--workbench-accent-strong);
 }
 
+body.web-workbench .nav button.active::after {
+  content: "";
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 0;
+  height: 4px;
+  border-radius: 99px 99px 0 0;
+  background: var(--workbench-accent);
+}
+
 body.web-workbench .app-shell > .main-panel {
-  grid-column: 2;
+  grid-column: 1;
   align-self: start;
   display: grid;
-  gap: 12px;
+  gap: 22px;
   min-width: 0;
 }
 
@@ -182,7 +198,7 @@ body.web-workbench .glass {
 }
 
 body.web-workbench .section {
-  padding: 18px;
+  padding: 28px;
 }
 
 body.web-workbench .stats {

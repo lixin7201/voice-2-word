@@ -16,6 +16,12 @@ create table if not exists employees (
   password_hash text not null,
   global_role text not null default 'employee',
   status text not null default 'active',
+  avatar_url text,
+  avatar_r2_key text,
+  avatar_color text,
+  bio text,
+  ai_profile_note text,
+  profile_updated_at timestamptz,
   last_login_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -35,6 +41,10 @@ create table if not exists audio_records (
   owner_employee_id uuid not null references employees(id),
   owner_department_id uuid references departments(id),
   title text not null,
+  title_source text not null default 'filename',
+  title_locked boolean not null default false,
+  ai_title text,
+  title_updated_at timestamptz,
   source_type text not null,
   source_page_url text,
   source_page_title text,
@@ -45,11 +55,27 @@ create table if not exists audio_records (
   duration_seconds integer,
   r2_key text,
   status text not null default 'created',
+  processing_started_at timestamptz,
+  transcribe_started_at timestamptz,
+  summarize_started_at timestamptz,
+  last_progress_at timestamptz,
+  asr_task_id text,
+  processing_attempts integer not null default 0,
   template_type text not null default 'meeting_minutes',
+  followup_type text not null default 'none',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   completed_at timestamptz,
   error_message text
+);
+
+create table if not exists record_processing_events (
+  id uuid primary key default gen_random_uuid(),
+  audio_record_id uuid not null references audio_records(id),
+  phase text not null,
+  message text,
+  metadata_json jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
 );
 
 create table if not exists transcripts (
@@ -129,6 +155,16 @@ create table if not exists system_settings (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists system_meta (
+  id uuid primary key default gen_random_uuid(),
+  schema_version integer not null default 2,
+  settings_version integer not null default 1,
+  settings_updated_at timestamptz,
+  settings_updated_by uuid references employees(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists audit_logs (
   id uuid primary key default gen_random_uuid(),
   actor_employee_id uuid references employees(id),
@@ -152,5 +188,7 @@ create table if not exists ztools_daily_digest_queue (
 create index if not exists idx_audio_records_owner on audio_records(owner_employee_id);
 create index if not exists idx_audio_records_department on audio_records(owner_department_id);
 create index if not exists idx_audio_records_status on audio_records(status);
+create index if not exists idx_audio_records_asr_task_id on audio_records(asr_task_id);
 create index if not exists idx_audio_records_created_at on audio_records(created_at);
+create index if not exists idx_record_processing_events_record on record_processing_events(audio_record_id);
 create index if not exists idx_system_settings_key on system_settings(key);

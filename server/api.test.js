@@ -4,16 +4,23 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { createVoiceServer } = require('./app');
+const { createInitialData } = require('./lib/seed');
 
-function startTestServer() {
+function startTestServer(options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-2-word-'));
+  const dataFile = path.join(dir, 'db.json');
+  if (options.initialData) fs.writeFileSync(dataFile, JSON.stringify(options.initialData, null, 2));
   const server = createVoiceServer({
-    dataFile: path.join(dir, 'db.json'),
+    dataFile,
     uploadDir: path.join(dir, 'uploads'),
     exportDir: path.join(dir, 'exports'),
     jwtSecret: 'test-secret',
     publicBaseUrl: 'http://localhost:0',
     devFakeAsr: true,
+    recoverProcessing: options.recoverProcessing,
+    easyAiBaseUrl: options.easyAiBaseUrl,
+    easyAiApiKey: options.easyAiApiKey,
+    easyAiModel: options.easyAiModel,
   });
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
@@ -22,6 +29,62 @@ function startTestServer() {
         dir,
         server,
         baseUrl: `http://127.0.0.1:${port}`,
+      });
+    });
+  });
+}
+
+function startDelayedLlmServer() {
+  let releaseResponse;
+  let rejectResponse;
+  let requestCount = 0;
+  const releasePromise = new Promise((resolve, reject) => {
+    releaseResponse = resolve;
+    rejectResponse = reject;
+  });
+  const server = require('node:http').createServer(async (req, res) => {
+    if (req.method !== 'POST' || req.url !== '/v1/chat/completions') {
+      res.writeHead(404).end();
+      return;
+    }
+    requestCount += 1;
+    try {
+      await releasePromise;
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              summaryMarkdown: '# 后台总结完成\n\n## 会议概览\n\n- 接口已先返回，再后台写入总结。',
+              overviewCard: {
+                heroTitle: '后台任务总结',
+                heroSubtitle: '接口立即返回',
+                cards: [{ title: '结果', items: ['后台完成'] }],
+              },
+              mindMap: {
+                title: '后台任务思维导图',
+                center: '总结',
+                branches: [{ title: '完成', summary: '后台完成', children: [] }],
+              },
+              structuredJson: { async: true },
+              titleSuggestion: '后台任务总结',
+            }),
+          },
+        }],
+      }));
+    } catch {
+      res.writeHead(500).end();
+    }
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({
+        server,
+        baseUrl: `http://127.0.0.1:${port}`,
+        release: releaseResponse,
+        reject: rejectResponse,
+        getRequestCount: () => requestCount,
       });
     });
   });
@@ -49,6 +112,15 @@ async function login(baseUrl, loginName) {
   return body;
 }
 
+async function waitFor(condition, timeoutMs = 1000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (await condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail('等待条件超时');
+}
+
 test('seeded users log in with expected roles and departments', async () => {
   const { server, baseUrl } = await startTestServer();
   try {
@@ -64,6 +136,195 @@ test('seeded users log in with expected roles and departments', async () => {
 
     const ermao = await login(baseUrl, '二毛');
     assert.deepEqual(ermao.employee.departments.map((item) => item.name).sort(), ['红娘部门', '运营部']);
+  } finally {
+    server.close();
+  }
+});
+
+test('server startup recovers interrupted summarizing records', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-2-word-recover-'));
+  const dataFile = path.join(dir, 'db.json');
+  const now = new Date().toISOString();
+  const data = createInitialData(now);
+  const owner = data.employees.find((employee) => employee.display_name === '离心');
+  const membership = data.employee_departments.find((item) => item.employee_id === owner.id);
+  data.audio_records.push({
+    id: 'rec-recover-summary',
+    owner_employee_id: owner.id,
+    owner_department_id: membership.department_id,
+    title: '重启恢复测试',
+    title_source: 'manual',
+    title_locked: true,
+    ai_title: '',
+    title_updated_at: now,
+    source_type: 'manual_upload',
+    source_page_url: '',
+    source_page_title: '',
+    source_media_url_hash: '',
+    original_file_name: 'recover.mp3',
+    mime_type: 'audio/mpeg',
+    file_size: 10,
+    duration_seconds: 1,
+    r2_key: 'recover.mp3',
+    status: 'summarizing',
+    template_type: 'meeting_minutes',
+    followup_type: 'none',
+    processing_started_at: now,
+    transcribe_started_at: now,
+    summarize_started_at: now,
+    last_progress_at: now,
+    asr_task_id: 'task-existing',
+    processing_attempts: 1,
+    completed_at: null,
+    error_message: '',
+    created_at: now,
+    updated_at: now,
+  });
+  data.transcripts.push({
+    id: 'transcript-recover-summary',
+    audio_record_id: 'rec-recover-summary',
+    asr_provider: 'dashscope',
+    asr_task_id: 'task-existing',
+    raw_text: '团队讨论录音助手服务重启后，需要继续生成总结，避免用户看到任务卡住。',
+    corrected_text: '团队讨论录音助手服务重启后，需要继续生成总结，避免用户看到任务卡住。',
+    segments_json: [{ id: 'seg-1', startMs: 0, endMs: 1000, text: '需要恢复任务' }],
+    speaker_aliases_json: {},
+    duration_ms: 1000,
+    cost_cny: null,
+    created_at: now,
+    updated_at: now,
+  });
+  fs.writeFileSync(dataFile, JSON.stringify(data, null, 2));
+
+  createVoiceServer({
+    dataFile,
+    uploadDir: path.join(dir, 'uploads'),
+    exportDir: path.join(dir, 'exports'),
+    jwtSecret: 'test-secret',
+    publicBaseUrl: 'http://localhost:0',
+    devFakeAsr: true,
+  });
+
+  await waitFor(() => JSON.parse(fs.readFileSync(dataFile, 'utf8')).audio_records[0].status === 'completed');
+  const recovered = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+  assert.equal(recovered.audio_records[0].status, 'completed');
+  assert.equal(recovered.followup_forms.length, 0);
+  assert.ok(recovered.summaries.some((summary) => summary.audio_record_id === 'rec-recover-summary'));
+  assert.match(
+    recovered.record_processing_events.map((event) => event.message).join('\n'),
+    /服务已重启，正在恢复处理任务。|已找到逐字稿，继续生成总结。/,
+  );
+});
+
+test('speaker alias edits sync generated summary content', async () => {
+  const now = new Date().toISOString();
+  const data = createInitialData(now);
+  const owner = data.employees.find((employee) => employee.display_name === '离心');
+  const membership = data.employee_departments.find((item) => item.employee_id === owner.id);
+  data.audio_records.push({
+    id: 'rec-speaker-sync',
+    owner_employee_id: owner.id,
+    owner_department_id: membership.department_id,
+    title: '说话人同步测试',
+    title_source: 'manual',
+    title_locked: true,
+    ai_title: '',
+    title_updated_at: now,
+    source_type: 'manual_upload',
+    source_page_url: '',
+    source_page_title: '',
+    source_media_url_hash: '',
+    original_file_name: 'speaker-sync.mp3',
+    mime_type: 'audio/mpeg',
+    file_size: 10,
+    duration_seconds: 1,
+    r2_key: 'speaker-sync.mp3',
+    status: 'completed',
+    template_type: 'matchmaker_profile',
+    followup_type: 'matchmaker',
+    processing_started_at: now,
+    transcribe_started_at: now,
+    summarize_started_at: now,
+    last_progress_at: now,
+    asr_task_id: '',
+    processing_attempts: 1,
+    completed_at: now,
+    error_message: '',
+    created_at: now,
+    updated_at: now,
+  });
+  data.transcripts.push({
+    id: 'transcript-speaker-sync',
+    audio_record_id: 'rec-speaker-sync',
+    asr_provider: 'local-dev',
+    asr_task_id: '',
+    raw_text: 'Speaker 1 提出继续优化录音总结。',
+    corrected_text: 'Speaker 1 提出继续优化录音总结。',
+    segments_json: [{ id: 'seg-1', startMs: 0, endMs: 1000, speaker: 'Speaker 1', text: '继续优化录音总结' }],
+    speaker_aliases_json: {},
+    duration_ms: 1000,
+    cost_cny: 0,
+    created_at: now,
+    updated_at: now,
+  });
+  data.summaries.push({
+    id: 'summary-speaker-sync',
+    audio_record_id: 'rec-speaker-sync',
+    template_type: 'matchmaker_profile',
+    summary_markdown: 'Speaker 1 提出继续优化录音总结。',
+    overview_card_json: {
+      heroTitle: 'Speaker 1 的总结卡片',
+      heroSubtitle: 'Speaker 1 重点',
+      cards: [{ title: '行动', blocks: [{ rows: [{ label: '负责人', value: 'Speaker 1' }], note: 'Speaker 1 已确认' }] }],
+    },
+    mind_map_json: {
+      title: 'Speaker 1 思维导图',
+      center: 'Speaker 1 决策',
+      branches: [{ title: '行动', summary: 'Speaker 1 推进', children: [{ title: '下一步', detail: 'Speaker 1 跟进', items: ['Speaker 1 复盘'] }] }],
+    },
+    structured_json: { owner: 'Speaker 1', nested: { note: 'Speaker 1 已确认' } },
+    model_provider: 'local-dev',
+    model_name: 'local-template',
+    model_error: '',
+    version: 1,
+    created_at: now,
+    updated_at: now,
+  });
+  data.followup_forms.push({
+    id: 'followup-speaker-sync',
+    audio_record_id: 'rec-speaker-sync',
+    business_type: 'matchmaker',
+    stage: '待跟进',
+    customer_name: '',
+    company_name: '',
+    status_label: 'Speaker 1 待跟进',
+    suggested_tag: '',
+    followup_markdown: 'Speaker 1 继续跟进客户。',
+    fields_json: { owner: 'Speaker 1' },
+    manual_edited: false,
+    created_at: now,
+    updated_at: now,
+  });
+
+  const { server, baseUrl } = await startTestServer({ initialData: data, recoverProcessing: false });
+  try {
+    const lixin = await login(baseUrl, '离心');
+    const result = await request(baseUrl, '/api/records/rec-speaker-sync/transcript-speakers', {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ speaker: 'Speaker 1', alias: '离心' }),
+    });
+
+    assert.equal(result.response.status, 200);
+    assert.equal(result.body.record.transcript.speaker_aliases_json['Speaker 1'], '离心');
+    assert.match(result.body.record.summary.summary_markdown, /离心/);
+    assert.doesNotMatch(result.body.record.summary.summary_markdown, /Speaker 1/);
+    assert.equal(result.body.record.summary.overview_card_json.heroTitle, '离心的总结卡片');
+    assert.equal(result.body.record.summary.overview_card_json.cards[0].blocks[0].rows[0].value, '离心');
+    assert.equal(result.body.record.summary.mind_map_json.branches[0].children[0].items[0], '离心复盘');
+    assert.equal(result.body.record.summary.structured_json.nested.note, '离心已确认');
+    assert.match(result.body.record.followupForm.followup_markdown, /离心/);
+    assert.equal(result.body.record.followupForm.fields_json.owner, '离心');
   } finally {
     server.close();
   }
@@ -139,6 +400,61 @@ test('record permissions isolate employee, department lead, and admin access', a
   }
 });
 
+test('record titles can be renamed only by owner or admin', async () => {
+  const { server, baseUrl } = await startTestServer();
+  try {
+    const lixin = await login(baseUrl, '离心');
+    const daijie = await login(baseUrl, '代姐');
+    const lanlan = await login(baseUrl, '岚岚');
+
+    const create = await request(baseUrl, '/api/records', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({
+        sourceType: 'manual_upload',
+        title: '招聘客户电话',
+        titleSource: 'manual',
+        templateType: 'recruitment_followup',
+      }),
+    });
+    const recordId = create.body.record.id;
+
+    const invalid = await request(baseUrl, `/api/records/${recordId}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({ title: '   ' }),
+    });
+    assert.equal(invalid.response.status, 400);
+
+    const ownerRename = await request(baseUrl, `/api/records/${recordId}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({ title: '招聘客户会员沟通' }),
+    });
+    assert.equal(ownerRename.response.status, 200);
+    assert.equal(ownerRename.body.record.title, '招聘客户会员沟通');
+    assert.equal(ownerRename.body.record.titleSource, 'manual');
+    assert.equal(ownerRename.body.record.titleLocked, true);
+
+    const leadRename = await request(baseUrl, `/api/records/${recordId}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${daijie.accessToken}` },
+      body: JSON.stringify({ title: '部门领导改名' }),
+    });
+    assert.equal(leadRename.response.status, 403);
+
+    const adminRename = await request(baseUrl, `/api/records/${recordId}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ title: '管理员复核标题' }),
+    });
+    assert.equal(adminRename.response.status, 200);
+    assert.equal(adminRename.body.record.title, '管理员复核标题');
+  } finally {
+    server.close();
+  }
+});
+
 test('manual upload creates completed local-development record and export', async () => {
   const { server, baseUrl } = await startTestServer();
   try {
@@ -165,6 +481,13 @@ test('manual upload creates completed local-development record and export', asyn
     assert.equal(uploadResponse.status, 200);
     assert.equal(uploadBody.record.status, 'completed');
     assert.equal(uploadBody.record.followupForm.business_type, 'recruitment');
+    assert.deepEqual(
+      uploadBody.record.processingEvents.map((event) => event.phase),
+      ['uploaded', 'uploaded', 'uploaded', 'summarizing', 'completed'],
+    );
+    assert.match(uploadBody.record.processingEvents.map((event) => event.message).join('\n'), /录音已上传/);
+    assert.match(uploadBody.record.processingEvents.map((event) => event.message).join('\n'), /录音处理完成/);
+    assert.equal(uploadBody.record.processingEvents.every((event) => Object.hasOwn(event, 'metadata')), true);
 
     const edited = await request(baseUrl, `/api/records/${recordId}/followup`, {
       method: 'PATCH',
@@ -196,6 +519,621 @@ test('manual upload creates completed local-development record and export', asyn
       assert.equal(result.response.status, 200);
       assert.equal(result.body.export.format, format);
     }
+  } finally {
+    server.close();
+  }
+});
+
+test('meeting minutes can skip follow-up and export omits follow-up section', async () => {
+  const { server, baseUrl } = await startTestServer();
+  try {
+    const lixin = await login(baseUrl, '离心');
+    const create = await request(baseUrl, '/api/records', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({
+        sourceType: 'manual_upload',
+        title: '内部产品会议',
+        templateType: 'meeting_minutes',
+        followupType: 'none',
+      }),
+    });
+    const recordId = create.body.record.id;
+
+    const form = new FormData();
+    form.append('file', new Blob(['fake audio for meeting'], { type: 'audio/mpeg' }), 'meeting.mp3');
+    const uploadResponse = await fetch(`${baseUrl}/api/records/${recordId}/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: form,
+    });
+    const uploadBody = await uploadResponse.json();
+    assert.equal(uploadResponse.status, 200);
+    assert.equal(uploadBody.record.status, 'completed');
+    assert.equal(uploadBody.record.followupType, 'none');
+    assert.equal(uploadBody.record.followupForm, null);
+
+    const speakerAlias = await request(baseUrl, `/api/records/${recordId}/transcript-speakers`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ speaker: 'Speaker 1', alias: '离心' }),
+    });
+    assert.equal(speakerAlias.response.status, 200);
+    assert.equal(speakerAlias.body.record.transcript.speaker_aliases_json['Speaker 1'], '离心');
+
+    const clearedAlias = await request(baseUrl, `/api/records/${recordId}/transcript-speakers`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ speaker: 'Speaker 1', alias: '' }),
+    });
+    assert.equal(clearedAlias.response.status, 200);
+    assert.equal(Object.hasOwn(clearedAlias.body.record.transcript.speaker_aliases_json, 'Speaker 1'), false);
+
+    const audioRange = await fetch(`${baseUrl}/api/records/${recordId}/audio`, {
+      headers: {
+        Authorization: `Bearer ${lixin.accessToken}`,
+        Range: 'bytes=0-3',
+      },
+    });
+    assert.equal(audioRange.status, 206);
+    assert.match(audioRange.headers.get('content-range') || '', /^bytes 0-3\//);
+
+    const exported = await request(baseUrl, `/api/records/${recordId}/export`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ target: 'full_record', format: 'md' }),
+    });
+    assert.equal(exported.response.status, 200);
+    const downloadUrl = exported.body.downloadUrl.replace('http://localhost:0', baseUrl);
+    const download = await fetch(downloadUrl, {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    const text = await download.text();
+    assert.equal(download.status, 200);
+    assert.doesNotMatch(text, /跟单|暂无跟单/);
+
+    for (const target of ['summary', 'transcript', 'overview_card', 'mind_map']) {
+      for (const format of ['md', 'txt', 'docx', 'pdf']) {
+        const result = await request(baseUrl, `/api/records/${recordId}/export`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${lixin.accessToken}` },
+          body: JSON.stringify({ target, format }),
+        });
+        assert.equal(result.response.status, 200);
+        assert.equal(result.body.export.format, format);
+        const exportedFile = await fetch(result.body.downloadUrl.replace('http://localhost:0', baseUrl), {
+          headers: { Authorization: `Bearer ${lixin.accessToken}` },
+        });
+        assert.equal(exportedFile.status, 200);
+        const exportedBytes = await exportedFile.arrayBuffer();
+        assert.ok(exportedBytes.byteLength > 0);
+      }
+    }
+
+    for (const target of ['overview_card', 'mind_map']) {
+      const result = await request(baseUrl, `/api/records/${recordId}/export`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${lixin.accessToken}` },
+        body: JSON.stringify({ target, format: 'svg' }),
+      });
+      assert.equal(result.response.status, 200);
+      assert.equal(result.body.export.format, 'svg');
+      const exportedFile = await fetch(result.body.downloadUrl.replace('http://localhost:0', baseUrl), {
+        headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      });
+      assert.equal(exportedFile.status, 200);
+      assert.match(exportedFile.headers.get('content-type') || '', /image\/svg\+xml/);
+      assert.match(await exportedFile.text(), /<svg/);
+    }
+
+    const unsupportedSvg = await request(baseUrl, `/api/records/${recordId}/export`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ target: 'summary', format: 'svg' }),
+    });
+    assert.equal(unsupportedSvg.response.status, 400);
+
+    const summaryMd = await request(baseUrl, `/api/records/${recordId}/export`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ target: 'summary', format: 'md' }),
+    });
+    const summaryDownload = await fetch(summaryMd.body.downloadUrl.replace('http://localhost:0', baseUrl), {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    const summaryText = await summaryDownload.text();
+    assert.match(summaryText, /总结卡片/);
+    assert.match(summaryText, /思维导图/);
+
+    const cardMd = await request(baseUrl, `/api/records/${recordId}/export`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ target: 'overview_card', format: 'md' }),
+    });
+    const cardDownload = await fetch(cardMd.body.downloadUrl.replace('http://localhost:0', baseUrl), {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    const cardText = await cardDownload.text();
+    assert.match(cardText, /总结卡片/);
+    assert.doesNotMatch(cardText, /逐字稿/);
+
+    const mindMapMd = await request(baseUrl, `/api/records/${recordId}/export`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ target: 'mind_map', format: 'md' }),
+    });
+    const mindMapDownload = await fetch(mindMapMd.body.downloadUrl.replace('http://localhost:0', baseUrl), {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    const mindMapText = await mindMapDownload.text();
+    assert.match(mindMapText, /思维导图/);
+    assert.doesNotMatch(mindMapText, /逐字稿/);
+
+    const bundle = await request(baseUrl, `/api/records/${recordId}/export`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ target: 'all_files', format: 'zip' }),
+    });
+    assert.equal(bundle.response.status, 200);
+    assert.equal(bundle.body.export.format, 'zip');
+    const bundleDownload = await fetch(bundle.body.downloadUrl.replace('http://localhost:0', baseUrl), {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    const bundleBuffer = Buffer.from(await bundleDownload.arrayBuffer());
+    assert.equal(bundleDownload.status, 200);
+    assert.match(bundleDownload.headers.get('content-type') || '', /application\/zip/);
+    assert.equal(bundleBuffer.subarray(0, 2).toString(), 'PK');
+    assert.ok(bundleBuffer.includes(Buffer.from('01-full-record.md')));
+    assert.ok(bundleBuffer.includes(Buffer.from('02-summary.pdf')));
+    assert.ok(bundleBuffer.includes(Buffer.from('03-transcript.docx')));
+    assert.ok(bundleBuffer.includes(Buffer.from('04-overview-card.svg')));
+    assert.ok(bundleBuffer.includes(Buffer.from('05-mind-map.svg')));
+  } finally {
+    server.close();
+  }
+});
+
+test('matchmaker records create matchmaker follow-up forms', async () => {
+  const { server, baseUrl } = await startTestServer();
+  try {
+    const coco = await login(baseUrl, 'Coco');
+    const create = await request(baseUrl, '/api/records', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${coco.accessToken}` },
+      body: JSON.stringify({
+        sourceType: 'manual_upload',
+        title: '红娘客户沟通',
+        templateType: 'matchmaker_profile',
+        followupType: 'matchmaker',
+      }),
+    });
+    assert.equal(create.response.status, 201);
+    assert.equal(create.body.record.followupType, 'matchmaker');
+
+    const form = new FormData();
+    form.append('file', new Blob(['fake audio for matchmaker'], { type: 'audio/mpeg' }), 'matchmaker.mp3');
+    const upload = await fetch(`${baseUrl}/api/records/${create.body.record.id}/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${coco.accessToken}` },
+      body: form,
+    });
+    const uploadBody = await upload.json();
+    assert.equal(upload.status, 200);
+    assert.equal(uploadBody.record.status, 'completed');
+    assert.equal(uploadBody.record.followupType, 'matchmaker');
+    assert.equal(uploadBody.record.followupForm.business_type, 'matchmaker');
+    assert.match(uploadBody.record.followupForm.followup_markdown, /红娘|客户|画像|跟进/);
+  } finally {
+    server.close();
+  }
+});
+
+test('regenerating with no follow-up deletes existing follow-up form', async () => {
+  const { server, baseUrl } = await startTestServer();
+  try {
+    const lanlan = await login(baseUrl, '岚岚');
+    const create = await request(baseUrl, '/api/records', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({
+        sourceType: 'manual_upload',
+        title: '招聘客户沟通',
+        templateType: 'recruitment_followup',
+        followupType: 'recruitment',
+      }),
+    });
+    const recordId = create.body.record.id;
+
+    const form = new FormData();
+    form.append('file', new Blob(['fake audio for recruitment'], { type: 'audio/mpeg' }), 'recruitment.mp3');
+    const upload = await fetch(`${baseUrl}/api/records/${recordId}/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: form,
+    });
+    const uploadBody = await upload.json();
+    assert.equal(upload.status, 200);
+    assert.equal(uploadBody.record.followupForm.business_type, 'recruitment');
+
+    const regenerated = await request(baseUrl, `/api/records/${recordId}/summarize`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({
+        templateType: 'meeting_minutes',
+        followupType: 'none',
+        force: true,
+      }),
+    });
+    assert.equal(regenerated.response.status, 200);
+    assert.equal(regenerated.body.record.templateType, 'meeting_minutes');
+    assert.equal(regenerated.body.record.followupType, 'none');
+    assert.equal(regenerated.body.record.followupForm, null);
+
+    const detail = await request(baseUrl, `/api/records/${recordId}`, {
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+    });
+    assert.equal(detail.body.record.followupType, 'none');
+    assert.equal(detail.body.record.followupForm, null);
+
+    const exported = await request(baseUrl, `/api/records/${recordId}/export`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({ target: 'full_record', format: 'md' }),
+    });
+    const download = await fetch(exported.body.downloadUrl.replace('http://localhost:0', baseUrl), {
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+    });
+    assert.equal(download.status, 200);
+    assert.doesNotMatch(await download.text(), /跟单|暂无跟单/);
+  } finally {
+    server.close();
+  }
+});
+
+test('summarize endpoint returns while the LLM job continues in the background', async () => {
+  const llm = await startDelayedLlmServer();
+  const now = new Date().toISOString();
+  const data = createInitialData(now);
+  const owner = data.employees.find((employee) => employee.display_name === '离心');
+  const membership = data.employee_departments.find((item) => item.employee_id === owner.id);
+  data.audio_records.push({
+    id: 'rec-background-summary',
+    owner_employee_id: owner.id,
+    owner_department_id: membership.department_id,
+    title: '后台总结接口测试',
+    title_source: 'manual',
+    title_locked: true,
+    ai_title: '',
+    title_updated_at: now,
+    source_type: 'manual_upload',
+    source_page_url: '',
+    source_page_title: '',
+    source_media_url_hash: '',
+    original_file_name: 'background-summary.mp3',
+    mime_type: 'audio/mpeg',
+    file_size: 10,
+    duration_seconds: 1,
+    r2_key: 'background-summary.mp3',
+    status: 'completed',
+    template_type: 'meeting_minutes',
+    followup_type: 'none',
+    processing_started_at: now,
+    transcribe_started_at: now,
+    summarize_started_at: now,
+    last_progress_at: now,
+    asr_task_id: '',
+    processing_attempts: 1,
+    completed_at: now,
+    error_message: '',
+    created_at: now,
+    updated_at: now,
+  });
+  data.transcripts.push({
+    id: 'transcript-background-summary',
+    audio_record_id: 'rec-background-summary',
+    asr_provider: 'local-dev',
+    asr_task_id: '',
+    raw_text: '团队要求生成纪要时接口先返回，后台继续生成总结。',
+    corrected_text: '团队要求生成纪要时接口先返回，后台继续生成总结。',
+    segments_json: [{ id: 'seg-1', startMs: 0, endMs: 1000, text: '接口先返回' }],
+    speaker_aliases_json: {},
+    duration_ms: 1000,
+    cost_cny: 0,
+    created_at: now,
+    updated_at: now,
+  });
+
+  const { server, baseUrl } = await startTestServer({
+    initialData: data,
+    recoverProcessing: false,
+    easyAiBaseUrl: llm.baseUrl,
+    easyAiApiKey: 'test-key',
+    easyAiModel: 'test-model',
+  });
+  try {
+    const lixin = await login(baseUrl, '离心');
+    const startedAt = Date.now();
+    const start = await request(baseUrl, '/api/records/rec-background-summary/summarize', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ templateType: 'meeting_minutes', followupType: 'none' }),
+    });
+
+    assert.equal(start.response.status, 200);
+    assert.equal(start.body.record.status, 'summarizing');
+    assert.ok(Date.now() - startedAt < 500, 'summarize route should not wait for the LLM response');
+    await waitFor(() => llm.getRequestCount() === 1);
+
+    const during = await request(baseUrl, '/api/records/rec-background-summary', {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    assert.equal(during.body.record.status, 'summarizing');
+
+    llm.release();
+    await waitFor(async () => {
+      const detail = await request(baseUrl, '/api/records/rec-background-summary', {
+        headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      });
+      return detail.body.record.status === 'completed';
+    });
+    const completed = await request(baseUrl, '/api/records/rec-background-summary', {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    assert.equal(completed.body.record.status, 'completed');
+    assert.match(completed.body.record.summary.summary_markdown, /后台总结完成/);
+  } finally {
+    server.close();
+    llm.release();
+    llm.server.close();
+  }
+});
+
+test('record audio endpoint enforces the same view permissions as detail pages', async () => {
+  const { server, baseUrl } = await startTestServer();
+  try {
+    const daijie = await login(baseUrl, '代姐');
+    const ermao = await login(baseUrl, '二毛');
+    const lanlan = await login(baseUrl, '岚岚');
+    const create = await request(baseUrl, '/api/records', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({
+        sourceType: 'manual_upload',
+        title: '招聘音频权限测试',
+        templateType: 'recruitment_followup',
+        followupType: 'recruitment',
+      }),
+    });
+    const recordId = create.body.record.id;
+
+    const form = new FormData();
+    form.append('file', new Blob(['audio permission bytes'], { type: 'audio/mpeg' }), 'permission.mp3');
+    const upload = await fetch(`${baseUrl}/api/records/${recordId}/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: form,
+    });
+    assert.equal(upload.status, 200);
+
+    const ownerAudio = await fetch(`${baseUrl}/api/records/${recordId}/audio`, {
+      headers: { Authorization: `Bearer ${lanlan.accessToken}`, Range: 'bytes=0-4' },
+    });
+    assert.equal(ownerAudio.status, 206);
+
+    const leadAudio = await fetch(`${baseUrl}/api/records/${recordId}/audio`, {
+      headers: { Authorization: `Bearer ${daijie.accessToken}`, Range: 'bytes=0-4' },
+    });
+    assert.equal(leadAudio.status, 206);
+
+    const wrongDepartmentAudio = await fetch(`${baseUrl}/api/records/${recordId}/audio`, {
+      headers: { Authorization: `Bearer ${ermao.accessToken}` },
+    });
+    assert.equal(wrongDepartmentAudio.status, 403);
+
+    const anonymousAudio = await fetch(`${baseUrl}/api/records/${recordId}/audio`);
+    assert.equal(anonymousAudio.status, 401);
+  } finally {
+    server.close();
+  }
+});
+
+test('audio endpoint falls back from octet-stream to playable mp3 MIME', async () => {
+  const { server, baseUrl } = await startTestServer();
+  try {
+    const lanlan = await login(baseUrl, '岚岚');
+    const create = await request(baseUrl, '/api/records', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({
+        sourceType: 'web_capture',
+        title: 'Plaud mp3 MIME 测试',
+        templateType: 'meeting_minutes',
+        followupType: 'none',
+      }),
+    });
+    const recordId = create.body.record.id;
+    const form = new FormData();
+    form.append('file', new Blob(['mp3 bytes'], { type: 'binary/octet-stream' }), 'plaud-record.mp3');
+    const upload = await fetch(`${baseUrl}/api/records/${recordId}/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: form,
+    });
+    assert.equal(upload.status, 200);
+
+    const audio = await fetch(`${baseUrl}/api/records/${recordId}/audio`, {
+      headers: {
+        Authorization: `Bearer ${lanlan.accessToken}`,
+        Range: 'bytes=0-3',
+      },
+    });
+    assert.equal(audio.status, 206);
+    assert.equal(audio.headers.get('content-type'), 'audio/mpeg');
+    assert.match(audio.headers.get('content-range') || '', /^bytes 0-3\//);
+  } finally {
+    server.close();
+  }
+});
+
+test('record upload rejects known audio duration above 12 hours', async () => {
+  const { server, baseUrl } = await startTestServer();
+  try {
+    const lanlan = await login(baseUrl, '岚岚');
+    const create = await request(baseUrl, '/api/records', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({
+        sourceType: 'web_capture',
+        title: '超长录音',
+        templateType: 'meeting_minutes',
+        followupType: 'none',
+      }),
+    });
+    const form = new FormData();
+    form.append('file', new Blob(['audio'], { type: 'audio/mpeg' }), 'long.mp3');
+    form.append('candidateMeta', JSON.stringify({ durationSeconds: 12 * 60 * 60 + 1 }));
+    const upload = await fetch(`${baseUrl}/api/records/${create.body.record.id}/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: form,
+    });
+    const body = await upload.json();
+    assert.equal(upload.status, 400);
+    assert.match(body.error, /最长支持 12 小时/);
+  } finally {
+    server.close();
+  }
+});
+
+test('records can be archived by owner and purged by admin with local files removed', async () => {
+  const { server, baseUrl, dir } = await startTestServer();
+  try {
+    const lixin = await login(baseUrl, '离心');
+    const lanlan = await login(baseUrl, '岚岚');
+    const create = await request(baseUrl, '/api/records', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({
+        sourceType: 'manual_upload',
+        title: '测试删除录音',
+        templateType: 'meeting_minutes',
+        followupType: 'none',
+      }),
+    });
+    const recordId = create.body.record.id;
+    const form = new FormData();
+    form.append('file', new Blob(['delete-me'], { type: 'audio/mpeg' }), 'delete-me.mp3');
+    const upload = await fetch(`${baseUrl}/api/records/${recordId}/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: form,
+    });
+    assert.equal(upload.status, 200);
+
+    const exported = await request(baseUrl, `/api/records/${recordId}/export`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({ target: 'summary', format: 'md' }),
+    });
+    assert.equal(exported.response.status, 200);
+    const uploadPath = path.join(dir, 'uploads', `${recordId}.mp3`);
+    const exportPath = path.join(dir, 'exports', `${recordId}-summary.md`);
+    assert.equal(fs.existsSync(uploadPath), true);
+    assert.equal(fs.existsSync(exportPath), true);
+
+    const archive = await request(baseUrl, `/api/records/${recordId}?mode=archive`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+    });
+    assert.equal(archive.response.status, 200);
+    assert.equal(archive.body.mode, 'archive');
+
+    const listed = await request(baseUrl, '/api/records', {
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+    });
+    assert.equal(listed.body.records.some((record) => record.id === recordId), false);
+    assert.equal(fs.existsSync(uploadPath), true);
+
+    const wrongPurge = await request(baseUrl, `/api/records/${recordId}?mode=purge`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+    });
+    assert.equal(wrongPurge.response.status, 403);
+
+    const purge = await request(baseUrl, `/api/records/${recordId}?mode=purge`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    assert.equal(purge.response.status, 200);
+    assert.equal(purge.body.deleted, true);
+    assert.equal(fs.existsSync(uploadPath), false);
+    assert.equal(fs.existsSync(exportPath), false);
+
+    const detail = await request(baseUrl, `/api/records/${recordId}`, {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    assert.equal(detail.response.status, 404);
+
+    const logs = await request(baseUrl, '/api/admin/audit-logs', {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    assert.match(logs.body.auditLogs.map((log) => log.action).join('\n'), /archive_record/);
+    assert.match(logs.body.auditLogs.map((log) => log.action).join('\n'), /purge_record/);
+  } finally {
+    server.close();
+  }
+});
+
+test('AI title suggestions update filename titles but not manual titles', async () => {
+  const { server, baseUrl } = await startTestServer();
+  try {
+    const lanlan = await login(baseUrl, '岚岚');
+
+    const autoCreate = await request(baseUrl, '/api/records', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({
+        sourceType: 'manual_upload',
+        title: '',
+        titleSource: 'filename',
+        templateType: 'meeting_minutes',
+      }),
+    });
+    const autoForm = new FormData();
+    autoForm.append('file', new Blob(['fake audio'], { type: 'audio/mpeg' }), '录音助手功能讨论.mp3');
+    const autoUpload = await fetch(`${baseUrl}/api/records/${autoCreate.body.record.id}/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: autoForm,
+    });
+    const autoBody = await autoUpload.json();
+    assert.equal(autoUpload.status, 200);
+    assert.equal(autoBody.record.title, '录音助手功能讨论');
+    assert.equal(autoBody.record.titleSource, 'ai');
+    assert.equal(autoBody.record.aiTitle, '录音助手功能讨论');
+
+    const manualCreate = await request(baseUrl, '/api/records', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({
+        sourceType: 'manual_upload',
+        title: '人工保留标题',
+        titleSource: 'manual',
+        templateType: 'meeting_minutes',
+      }),
+    });
+    const manualForm = new FormData();
+    manualForm.append('file', new Blob(['fake audio'], { type: 'audio/mpeg' }), '产品路线讨论.mp3');
+    const manualUpload = await fetch(`${baseUrl}/api/records/${manualCreate.body.record.id}/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: manualForm,
+    });
+    const manualBody = await manualUpload.json();
+    assert.equal(manualUpload.status, 200);
+    assert.equal(manualBody.record.title, '人工保留标题');
+    assert.equal(manualBody.record.titleSource, 'manual');
+    assert.equal(manualBody.record.aiTitle, '产品路线讨论');
   } finally {
     server.close();
   }
@@ -256,6 +1194,63 @@ test('admin can create, disable, enable, and reset employees', async () => {
   }
 });
 
+test('employees can update profile and change password', async () => {
+  const { server, baseUrl } = await startTestServer();
+  try {
+    const lanlan = await login(baseUrl, '岚岚');
+
+    const profile = await request(baseUrl, '/api/me/profile', {
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+    });
+    assert.equal(profile.response.status, 200);
+    assert.equal(profile.body.employee.displayName, '岚岚');
+
+    const updated = await request(baseUrl, '/api/me/profile', {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({
+        displayName: '岚岚',
+        bio: '负责招聘客户跟进',
+        aiProfileNote: '请优先输出待办、风险和责任人。',
+        avatarColor: '#1b9a8a',
+        globalRole: 'admin',
+      }),
+    });
+    assert.equal(updated.response.status, 200);
+    assert.equal(updated.body.employee.bio, '负责招聘客户跟进');
+    assert.equal(updated.body.employee.aiProfileNote, '请优先输出待办、风险和责任人。');
+    assert.equal(updated.body.employee.globalRole, 'employee');
+
+    const wrongPassword = await request(baseUrl, '/api/auth/change-password', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({ oldPassword: 'wrong', newPassword: 'new-pass' }),
+    });
+    assert.equal(wrongPassword.response.status, 400);
+
+    const changed = await request(baseUrl, '/api/auth/change-password', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({ oldPassword: 'dayibin', newPassword: 'new-pass' }),
+    });
+    assert.equal(changed.response.status, 200);
+
+    const oldLogin = await request(baseUrl, '/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ loginName: '岚岚', password: 'dayibin' }),
+    });
+    assert.equal(oldLogin.response.status, 401);
+
+    const newLogin = await request(baseUrl, '/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ loginName: '岚岚', password: 'new-pass' }),
+    });
+    assert.equal(newLogin.response.status, 200);
+  } finally {
+    server.close();
+  }
+});
+
 test('admin settings centrally configure backend secrets without exposing them', async () => {
   const { server, baseUrl } = await startTestServer();
   try {
@@ -298,6 +1293,7 @@ test('admin settings centrally configure backend secrets without exposing them',
     assert.equal(saved.body.status.r2Configured, true);
     assert.equal(saved.body.status.llmConfigured, true);
     assert.equal(saved.body.status.devFakeAsr, false);
+    assert.equal(saved.body.meta.settingsVersion, 2);
 
     const dashscopeField = saved.body.groups
       .flatMap((group) => group.fields)
@@ -326,6 +1322,37 @@ test('admin settings centrally configure backend secrets without exposing them',
     const preservedFields = preserved.body.groups.flatMap((group) => group.fields);
     assert.equal(preservedFields.find((field) => field.key === 'dashscopeApiKey').configured, true);
     assert.equal(preserved.body.status.publicBaseUrl, 'http://voice-server.local:8127');
+    assert.equal(preserved.body.meta.settingsVersion, 3);
+
+    const cleared = await request(baseUrl, '/api/admin/settings', {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({
+        settings: { easyAiApiKey: '' },
+        clearKeys: ['easyAiApiKey'],
+      }),
+    });
+    assert.equal(cleared.body.status.llmConfigured, false);
+    assert.equal(cleared.body.meta.settingsVersion, 4);
+
+    const settingTest = await request(baseUrl, '/api/admin/settings/test', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ target: 'publicBaseUrl' }),
+    });
+    assert.equal(settingTest.response.status, 200);
+    assert.equal(settingTest.body.ok, true);
+
+    const auditLogs = await request(baseUrl, '/api/admin/audit-logs', {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    assert.equal(auditLogs.response.status, 200);
+    const settingsAuditLogs = auditLogs.body.auditLogs.filter((log) => log.targetType === 'system_settings');
+    assert.ok(settingsAuditLogs.length >= 4);
+    assert.ok(settingsAuditLogs.some((log) => log.action === 'update_system_settings'));
+    assert.ok(settingsAuditLogs.some((log) => log.action === 'test_system_settings'));
+    assert.ok(settingsAuditLogs.every((log) => log.actorName === '离心'));
+    assert.equal(JSON.stringify(settingsAuditLogs).includes('dashscope-secret-key'), false);
   } finally {
     server.close();
   }

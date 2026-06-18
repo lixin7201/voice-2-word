@@ -1,11 +1,22 @@
 const DEFAULT_BASE_URL = 'https://dashscope.aliyuncs.com/api/v1';
+const DEFAULT_TASK_TIMEOUT_MS = 13 * 60 * 60 * 1000;
 
 function isDashScopeConfigured(config) {
   return Boolean(config.dashscopeApiKey);
 }
 
 async function transcribeWithDashScope(config, fileUrl, fetchImpl = fetch) {
-  const baseUrl = (config.dashscopeBaseUrl || DEFAULT_BASE_URL).replace(/\/$/, '');
+  const submitted = await submitDashScopeTask(config, fileUrl, fetchImpl);
+  const queried = await waitForDashScopeTask(config, submitted.baseUrl, submitted.taskId, fetchImpl);
+  const transcription = await fetchDashScopeTranscription(queried, fetchImpl);
+  return {
+    taskId: submitted.taskId,
+    ...transcription,
+  };
+}
+
+async function submitDashScopeTask(config, fileUrl, fetchImpl = fetch) {
+  const baseUrl = resolveDashScopeBaseUrl(config);
   const submit = await fetchImpl(`${baseUrl}/services/audio/asr/transcription`, {
     method: 'POST',
     headers: {
@@ -30,8 +41,14 @@ async function transcribeWithDashScope(config, fileUrl, fetchImpl = fetch) {
   }
   const taskId = submitJson.output?.task_id;
   if (!taskId) throw new Error('DashScope 未返回 task_id');
+  return { taskId, baseUrl };
+}
 
-  const queried = await waitForDashScopeTask(config, baseUrl, taskId, fetchImpl);
+function resolveDashScopeBaseUrl(config) {
+  return (config.dashscopeBaseUrl || DEFAULT_BASE_URL).replace(/\/$/, '');
+}
+
+async function fetchDashScopeTranscription(queried, fetchImpl = fetch) {
   const result = firstDashScopeResult(queried);
   if (!result || result.subtask_status === 'FAILED') {
     throw new Error(`DashScope 转写失败：${result?.message || queried.output?.message || '未知错误'}`);
@@ -47,14 +64,13 @@ async function transcribeWithDashScope(config, fileUrl, fetchImpl = fetch) {
   }
 
   return {
-    taskId,
     ...normalizeDashScopeTranscription(transcriptionJson),
     raw: transcriptionJson,
   };
 }
 
-async function waitForDashScopeTask(config, baseUrl, taskId, fetchImpl) {
-  const timeoutMs = Number(config.dashscopeTimeoutMs || 20 * 60 * 1000);
+async function waitForDashScopeTask(config, baseUrl, taskId, fetchImpl = fetch) {
+  const timeoutMs = Number(config.dashscopeTimeoutMs || DEFAULT_TASK_TIMEOUT_MS);
   const intervalMs = Number(config.dashscopePollIntervalMs || 5000);
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -102,7 +118,12 @@ function delay(ms) {
 }
 
 module.exports = {
+  fetchDashScopeTranscription,
   isDashScopeConfigured,
   normalizeDashScopeTranscription,
+  resolveDashScopeBaseUrl,
+  submitDashScopeTask,
   transcribeWithDashScope,
+  waitForDashScopeTask,
+  DEFAULT_TASK_TIMEOUT_MS,
 };

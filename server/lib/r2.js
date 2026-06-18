@@ -34,6 +34,29 @@ async function putR2Object(config, key, buffer, contentType, fetchImpl = fetch) 
   return { key };
 }
 
+async function deleteR2Object(config, key, fetchImpl = fetch) {
+  if (!key) return { key, skipped: true };
+  const url = presignR2Url(config, {
+    method: 'DELETE',
+    key,
+    expiresIn: 3600,
+  });
+  const response = await fetchImpl(url, { method: 'DELETE' });
+  if (!response.ok && response.status !== 404) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`R2 删除失败：${key} HTTP ${response.status}${text ? ` ${text.slice(0, 180)}` : ''}`);
+  }
+  return { key };
+}
+
+async function deleteR2Objects(config, keys, fetchImpl = fetch) {
+  const results = [];
+  for (const key of [...new Set((keys || []).filter(Boolean))]) {
+    results.push(await deleteR2Object(config, key, fetchImpl));
+  }
+  return results;
+}
+
 function presignR2Url(config, options) {
   if (!isR2Configured(config)) throw new Error('R2 环境变量未配置完整');
   const method = options.method || 'GET';
@@ -108,6 +131,8 @@ function sha256Hex(value) {
 }
 
 module.exports = {
+  deleteR2Object,
+  deleteR2Objects,
   isR2Configured,
   presignR2Url,
   putR2Object,

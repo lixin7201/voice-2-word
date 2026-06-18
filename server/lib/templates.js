@@ -1,3 +1,5 @@
+const { normalizeMindMap } = require('./mind-map');
+
 const TEMPLATE_LABELS = {
   meeting_minutes: '会议纪要',
   business_review: '业务复盘',
@@ -7,6 +9,15 @@ const TEMPLATE_LABELS = {
 };
 
 const TEMPLATE_OPTIONS = Object.entries(TEMPLATE_LABELS).map(([value, label]) => ({ value, label }));
+
+const FOLLOWUP_LABELS = {
+  none: '不生成跟单',
+  general_customer: '通用客户跟单',
+  matchmaker: '红娘跟单/画像字段',
+  recruitment: '招聘跟单',
+};
+
+const FOLLOWUP_OPTIONS = Object.entries(FOLLOWUP_LABELS).map(([value, label]) => ({ value, label }));
 
 const RECRUITMENT_STAGES = {
   initial_effective_followup: '初期有效跟进',
@@ -23,12 +34,48 @@ function defaultTemplateForEmployee(employee, departments = []) {
   return 'meeting_minutes';
 }
 
+function defaultFollowupForEmployee(employee, departments = []) {
+  const names = departments.map((department) => department.name);
+  if (names.includes('红娘部门')) return 'matchmaker';
+  if (names.includes('招聘部')) return 'recruitment';
+  return 'none';
+}
+
+function followupTypeForTemplate(templateType) {
+  if (templateType === 'matchmaker_profile') return 'matchmaker';
+  if (templateType === 'recruitment_followup') return 'recruitment';
+  if (templateType === 'customer_follow_up') return 'general_customer';
+  return 'none';
+}
+
+function normalizeFollowupType(value, fallbackTemplateType = '') {
+  const type = String(value || '').trim();
+  if (FOLLOWUP_LABELS[type]) return type;
+  return followupTypeForTemplate(fallbackTemplateType);
+}
+
+function shouldGenerateFollowup(record) {
+  return normalizeFollowupType(record.followup_type, record.template_type) !== 'none';
+}
+
+function followupTemplateForType(followupType, fallbackTemplateType = '') {
+  const type = normalizeFollowupType(followupType, fallbackTemplateType);
+  if (type === 'matchmaker') return 'matchmaker_profile';
+  if (type === 'recruitment') return 'recruitment_followup';
+  if (type === 'general_customer') return 'customer_follow_up';
+  return fallbackTemplateType || 'meeting_minutes';
+}
+
 function buildLocalSummary(record, transcriptText = '') {
   const label = TEMPLATE_LABELS[record.template_type] || TEMPLATE_LABELS.meeting_minutes;
   const title = record.title || record.original_file_name || '录音记录';
   const sourceText = cleanTranscript(transcriptText);
+  const titleSuggestion = buildTitleSuggestion(record, sourceText);
   const sections = templateSections(record.template_type, sourceText);
-  const followup = buildFollowup(record.template_type, sourceText);
+  const wantsFollowup = shouldGenerateFollowup(record);
+  const followup = wantsFollowup
+    ? buildFollowup(followupTemplateForType(record.followup_type, record.template_type), sourceText)
+    : emptyFollowup();
   const summaryMarkdown = [
     `# ${title}`,
     '',
@@ -51,17 +98,36 @@ function buildLocalSummary(record, transcriptText = '') {
     summaryMarkdown,
     structuredJson: {
       templateType: record.template_type,
+      followupType: normalizeFollowupType(record.followup_type, record.template_type),
       templateLabel: label,
       generatedMode: sourceText ? 'local_structured' : 'local_empty_template',
       sections,
-      fields: followup.fields,
-      pending: followup.pending,
+      fields: wantsFollowup ? followup.fields : {},
+      pending: wantsFollowup ? followup.pending : ['人名、金额、日期、承诺内容仍建议回听复核'],
     },
     overviewCard: {
       title,
-      template: label,
-      keyFields: followup.overview,
+      badge: label,
+      eyebrow: '录音整理',
+      heroTitle: title,
+      heroSubtitle: sections.map((section) => section.heading).join('、'),
+      generatedByLabel: '内容由 AI 生成',
+      cards: sections.map((section, index) => ({
+        id: `section-${index + 1}`,
+        title: section.heading,
+        tone: ['blue', 'green', 'orange', 'purple', 'cyan'][index % 5],
+        layout: index === 0 ? 'wide' : 'medium',
+        iconStyle: 'number',
+        items: section.items.slice(0, 3),
+        blocks: [{
+          title: '重点提炼',
+          items: section.items,
+          note: index === 0 ? '重要信息仍建议结合录音回听核对。' : '',
+        }],
+      })),
+      keyFields: wantsFollowup ? followup.overview : Object.fromEntries(sections.map((section) => [section.heading, section.items[0] || '待核对'])),
     },
+    mindMap: normalizeMindMap(buildLocalMindMap(title, label, sections), title),
     followupMarkdown: followup.markdown,
     followupFields: followup.fields,
     followupStage: followup.stage || '',
@@ -69,19 +135,48 @@ function buildLocalSummary(record, transcriptText = '') {
     statusLabel: followup.statusLabel || '待核对',
     customerName: followup.customerName || '',
     companyName: followup.companyName || '',
+    titleSuggestion,
   };
 }
 
-function buildSummaryPrompt(record, transcriptText) {
+function buildLocalMindMap(title, label, sections) {
+  return {
+    title: `${title} - 思维导图总结`,
+    center: label,
+    branches: sections.map((section, index) => ({
+      id: `branch-${index + 1}`,
+      title: section.heading,
+      tone: ['blue', 'green', 'orange', 'purple', 'cyan'][index % 5],
+      summary: section.items[0] || '待核对',
+      children: section.items.slice(0, 4).map((item, childIndex) => ({
+        title: `要点 ${childIndex + 1}`,
+        detail: item,
+        items: [],
+      })),
+    })),
+  };
+}
+
+function buildSummaryPrompt(record, transcriptText, context = {}) {
   const label = TEMPLATE_LABELS[record.template_type] || TEMPLATE_LABELS.meeting_minutes;
+  const profileContext = String(context.profileContext || '').trim();
+  const followupType = normalizeFollowupType(record.followup_type, record.template_type);
+  const wantsFollowup = followupType !== 'none';
+  const jsonFields = wantsFollowup
+    ? 'summaryMarkdown, overviewCard, mindMap, structuredJson, followupMarkdown, followupFields, followupStage, suggestedTag, statusLabel, customerName, companyName, titleSuggestion'
+    : 'summaryMarkdown, overviewCard, mindMap, structuredJson, titleSuggestion';
   return [
     {
       role: 'system',
       content: [
         '你是大宜宾内部录音总结助手，只能依据逐字稿输出，不编造。',
         '必须返回 JSON，不要输出 Markdown 代码块。',
-        'JSON 字段：summaryMarkdown, overviewCard, structuredJson, followupMarkdown, followupFields, followupStage, suggestedTag, statusLabel, customerName, companyName。',
+        `JSON 字段：${jsonFields}。`,
+        'overviewCard 用于前端卡片展示，mindMap 用于思维导图展示；如果信息不足，也要给出可展示的结构化兜底内容。',
+        'overviewCard 必须像知识卡片：包含 badge、eyebrow、heroTitle、heroSubtitle、generatedByLabel、cards。cards 每项包含 id、title、tone、layout、iconStyle、items，并尽量包含 blocks；blocks 可包含 title、items、rows、note。rows 用于负责人、客户、金额、阶段、时间等字段，格式为 {label,value,note}。',
+        'titleSuggestion 用中文短标题概括主题，8 到 18 个汉字左右，最长 30 个中文字符；不要含日期、文件扩展名、哈希串；不要泛写“会议纪要”“录音”“转写”。',
         '涉及人名、金额、年龄、地址、岗位、承诺、合同、服务结果等不确定信息必须进入待核对。',
+        '员工背景仅用于选择表达重点和字段优先级，不得把背景当作录音事实写入纪要。',
         '红娘场景不做道德评价、不用攻击性标签、不承诺匹配成功。',
         '招聘场景不得虚构意向，不得承诺招聘效果，无效号码/停机/空号不得写成有效跟进。',
       ].join('\n'),
@@ -90,15 +185,33 @@ function buildSummaryPrompt(record, transcriptText) {
       role: 'user',
       content: [
         `模板：${label}`,
+        `跟单生成：${FOLLOWUP_LABELS[followupType] || '不生成跟单'}`,
         `记录标题：${record.title || record.original_file_name || '录音记录'}`,
+        profileContext ? `\n${profileContext}` : '',
         '',
-        '请按需求文档字段输出，招聘客户跟进需自动判断五阶段；红娘客户画像需覆盖报价、成交状态、基础画像、情感经历、择偶条件、风险和下次话术。',
+        wantsFollowup
+          ? '请按需求文档字段输出；招聘客户跟进需自动判断五阶段；红娘客户画像需覆盖报价、成交状态、基础画像、情感经历、择偶条件、风险和下次话术。'
+          : '本次只生成录音总结和会议纪要，不要输出跟单内容，也不要生成客户跟进字段。',
         '',
         '逐字稿：',
         transcriptText || '（无逐字稿）',
       ].join('\n'),
     },
   ];
+}
+
+function emptyFollowup() {
+  return {
+    fields: {},
+    overview: {},
+    pending: [],
+    markdown: '',
+    stage: '',
+    suggestedTag: '',
+    statusLabel: '',
+    customerName: '',
+    companyName: '',
+  };
 }
 
 function templateSections(templateType, transcriptText) {
@@ -366,12 +479,50 @@ function pendingFromFields(fields) {
   return pending.length ? pending.map((key) => `${key} 待核对`) : ['人名、金额、日期、承诺内容仍建议回听复核'];
 }
 
+function buildTitleSuggestion(record, transcriptText) {
+  const candidates = [
+    ...extractHighlights(transcriptText),
+    record.source_page_title,
+    record.title,
+    record.original_file_name,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeTitleSuggestion(candidate);
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
+function normalizeTitleSuggestion(value) {
+  let text = String(value || '')
+    .replace(/^本地开发模式已接收文件[:：]?/, '')
+    .replace(/\.(mp3|m4a|wav|aac|flac|ogg|opus|mp4|mov|webm)$/i, '')
+    .replace(/[「」"'“”‘’`]/g, '')
+    .replace(/\s+/g, '')
+    .trim();
+  text = text.split(/[。！？!?；;，,\n]/).find(Boolean) || '';
+  if (!text || text.length < 2) return '';
+  if (/^[a-f0-9_-]{24,}$/i.test(text)) return '';
+  if (!/[\u4e00-\u9fa5]/.test(text)) return '';
+  text = text.replace(/^(关于|讨论|沟通|记录)/, '');
+  if (['网页录音', '录音记录', '会议纪要', '转写结果'].includes(text)) return '';
+  return text.slice(0, 30);
+}
+
 module.exports = {
+  FOLLOWUP_LABELS,
+  FOLLOWUP_OPTIONS,
   RECRUITMENT_STAGES,
   TEMPLATE_LABELS,
   TEMPLATE_OPTIONS,
   buildLocalSummary,
   buildSummaryPrompt,
+  defaultFollowupForEmployee,
   defaultTemplateForEmployee,
   detectRecruitmentStage,
+  followupTemplateForType,
+  followupTypeForTemplate,
+  normalizeFollowupType,
+  normalizeMindMap,
+  shouldGenerateFollowup,
 };
