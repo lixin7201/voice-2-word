@@ -108,7 +108,57 @@ GET /api/extension/latest
 - 当前办公室使用的是“加载已解压的扩展程序”，Chrome 不允许这种扩展静默覆盖安装目录。
 - 已安装 `0.1.1` 及以后版本的同事，可以在局域网内看到后续版本提示并下载新版包。
 - 仍停留在 `0.1.0` 或更旧版本的同事，旧插件本身没有更新检查代码，需要手动安装一次新版包。
-- 如果未来要做到真正自动更新，需要走 `npm run package:extension-crx`、固定 CRX 私钥、`updates.xml` 或 Chrome 企业策略。
+- “加载已解压的扩展程序”永远只是手动更新模式。即使删除 `0.1.1` 后重新加载 `0.1.2` 文件夹，后续也不会变成静默自动更新。
+- 真正自动更新必须迁移到 CRX 策略安装模式：固定 CRX 私钥、生成 `.crx` 和 `updates.xml`，再用 Chrome 企业策略安装。
+
+### CRX 自动更新模式
+
+当前已准备好 `0.1.2` 的 CRX 自动更新包：
+
+```text
+releases/extension-crx/
+  README.md
+  updates.xml
+  voice-to-word-extension-0.1.2.crx
+  voice-to-word-chrome-policy.mobileconfig
+  com.google.Chrome.plist
+  install-windows-force-policy.reg
+  metadata.json
+```
+
+固定扩展 ID：
+
+```text
+njkpohlpnngjhmlicpdnnijnbnahjakl
+```
+
+更新地址：
+
+```text
+http://lixindemac-studio.local:8127/releases/extension-crx/updates.xml
+```
+
+迁移规则：
+
+1. 旧的 `0.1.1` 如果是“加载已解压的扩展程序”安装的，需要从 `chrome://extensions` 移除。
+2. 新版不能再用“加载已解压的扩展程序”安装；必须通过 Chrome 策略安装 CRX 版。
+3. Mac 使用 `voice-to-word-chrome-policy.mobileconfig` 或 `com.google.Chrome.plist` 下发策略。
+4. Windows 使用组策略、Intune、域控或管理员注册表策略下发 `ExtensionInstallForcelist`。
+5. 安装后打开 `chrome://policy`，确认 `ExtensionInstallForcelist` 状态是 OK；再打开 `chrome://extensions`，确认扩展 ID 是 `njkpohlpnngjhmlicpdnnijnbnahjakl`。
+
+后续发布新版本时：
+
+```bash
+EXTENSION_KEY_PATH=/Users/lixin/.voice-to-word/extension-update-key.pem PUBLIC_BASE_URL=http://lixindemac-studio.local:8127 npm run package:extension-crx
+```
+
+必须一直使用同一把私钥：
+
+```text
+/Users/lixin/.voice-to-word/extension-update-key.pem
+```
+
+这把私钥不要发给员工，不要提交到 Git。丢失后扩展 ID 会变，旧 CRX 版就不能原地自动更新。
 
 ## 安全要求
 
