@@ -91,6 +91,25 @@ test('creates Cloudflare R2 presigned S3-compatible URLs', () => {
   assert.ok(url.includes('X-Amz-Signature='));
 });
 
+test('R2 presigned URLs encode SigV4 special characters in object keys', () => {
+  const url = presignR2Url({
+    r2AccountId: 'account-id',
+    r2AccessKeyId: 'access-key',
+    r2SecretAccessKey: 'secret-key',
+    r2Bucket: 'voice-bucket',
+  }, {
+    method: 'PUT',
+    key: "audio/2026-06-18/rec/2026-06-18 09_18_40(1) it's ok!.mp3",
+    now: new Date('2026-06-18T00:00:00.000Z'),
+    expiresIn: 7200,
+  });
+
+  const pathname = new URL(url).pathname;
+  assert.match(pathname, /09_18_40%281%29/);
+  assert.match(pathname, /it%27s%20ok%21/);
+  assert.doesNotMatch(pathname, /[()'!]/);
+});
+
 test('R2 uploads accept streaming bodies without buffering whole audio files', async () => {
   const calls = [];
   const streamBody = {

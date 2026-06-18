@@ -3,6 +3,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { createInitialData } = require('./seed');
 const { defaultLlmProviderRows } = require('./llm-providers');
+const { inferLegacySummaryQuality } = require('./summary-quality');
 
 class JsonStore {
   constructor(filePath) {
@@ -89,7 +90,7 @@ function migrateData(data) {
   ensureTable('employee_departments');
   const records = ensureTable('audio_records');
   ensureTable('transcripts');
-  ensureTable('summaries');
+  const summaries = ensureTable('summaries');
   ensureTable('followup_forms');
   ensureTable('record_notes');
   ensureTable('record_processing_events');
@@ -152,6 +153,17 @@ function migrateData(data) {
     changed = assignDefault(record, 'archived_by', '') || changed;
     changed = assignDefault(record, 'deleted_at', '') || changed;
     changed = assignDefault(record, 'deleted_by', '') || changed;
+  }
+
+  for (const summary of summaries) {
+    const transcript = data.transcripts.find((item) => item.audio_record_id === summary.audio_record_id);
+    const quality = inferLegacySummaryQuality(summary, transcript?.corrected_text || transcript?.raw_text || '');
+    changed = assignDefault(summary, 'quality_status', quality.qualityStatus) || changed;
+    changed = assignDefault(summary, 'quality_reason', quality.qualityReason) || changed;
+    changed = assignDefault(summary, 'input_transcript_chars', quality.inputTranscriptChars) || changed;
+    changed = assignDefault(summary, 'summary_chars', quality.summaryChars) || changed;
+    changed = assignDefault(summary, 'placeholder_count', quality.placeholderCount) || changed;
+    changed = assignDefault(summary, 'provider_errors_json', []) || changed;
   }
 
   return changed;

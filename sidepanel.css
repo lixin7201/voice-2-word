@@ -635,6 +635,12 @@ textarea:focus {
   background: rgba(234, 250, 242, 0.76);
 }
 
+.status.warning {
+  border-color: rgba(183, 121, 31, 0.32);
+  color: #78520b;
+  background: rgba(255, 248, 232, 0.78);
+}
+
 .client-error-panel {
   display: grid;
   gap: 8px;
@@ -702,6 +708,53 @@ textarea:focus {
 .history-main {
   min-width: 0;
   cursor: pointer;
+}
+
+.history-group-list {
+  display: grid;
+  gap: 10px;
+}
+
+.history-group {
+  display: grid;
+  gap: 8px;
+}
+
+.history-group-header {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 10px;
+  align-items: center;
+  text-align: left;
+  padding: 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+}
+
+.history-group-header span,
+.history-group-header small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.history-group-header strong,
+.history-group-header em,
+.history-group-header small {
+  min-width: 0;
+}
+
+.history-group-header em {
+  grid-column: 2;
+  color: var(--muted);
+  font-style: normal;
+  font-size: 12px;
+}
+
+.history-group-header small {
+  grid-column: 2;
 }
 
 .history-actions {
@@ -952,6 +1005,7 @@ textarea:focus {
   border-color: rgba(207, 59, 59, 0.28);
 }
 
+.badge.transcribed,
 .badge.transcribing,
 .badge.summarizing,
 .badge.uploaded {

@@ -29,6 +29,8 @@ const appState = {
   records: [],
   selectedRecordIds: {},
   historyFilter: 'all',
+  historyGroupBy: 'auto',
+  historyExpandedGroups: {},
   detail: null,
   detailTab: 'summary',
   collapsedPanels: {},
@@ -56,6 +58,7 @@ const appState = {
   settingChoices: {},
   processingChoices: {},
   runtime: null,
+  extensionUpdate: null,
   titleEditing: false,
   titleDraft: null,
   scanActive: false,
@@ -119,6 +122,7 @@ async function init() {
     render();
     try {
       await loadRuntimeSafe();
+      await loadExtensionUpdateSafe();
       await loadMe();
       await loadDepartments();
       await loadRecords();
@@ -146,7 +150,7 @@ function render() {
   app.innerHTML = [
     renderTopbar(),
     renderNav(),
-    `<main class="main-panel">${renderClientErrorPanel()}${renderStatus()}${renderCurrentView()}</main>`,
+    `<main class="main-panel">${renderClientErrorPanel()}${renderExtensionUpdateNotice()}${renderStatus()}${renderCurrentView()}</main>`,
   ].join('');
   bindCommon();
   bindCurrentView();
@@ -279,7 +283,37 @@ function renderStatus() {
   return `<div class="status ${escapeHtml(appState.statusType)}">${escapeHtml(appState.status)}</div>`;
 }
 
+function renderExtensionUpdateNotice() {
+  const update = appState.extensionUpdate || {};
+  if (!update.hasUpdate && !update.mustUpdate) return '';
+  const type = update.mustUpdate ? 'error' : 'warning';
+  const changelog = Array.isArray(update.changelog) ? update.changelog.slice(0, 3) : [];
+  return `
+    <section class="status ${type} extension-update">
+      <div class="item-title">
+        <strong>${update.mustUpdate ? '当前插件版本过旧' : `发现新版插件 ${escapeHtml(update.latestVersion || '')}`}</strong>
+        <span class="meta">当前 ${escapeHtml(update.currentVersion || '')}</span>
+      </div>
+      ${changelog.length ? `<div class="meta">${changelog.map(escapeHtml).join(' · ')}</div>` : ''}
+      <div class="btn-row">
+        ${update.downloadUrl ? `<button class="btn primary" type="button" data-action="download-extension-update">下载新版插件包</button>` : '<span class="meta">请联系管理员获取新版插件包</span>'}
+        <button class="btn" type="button" data-action="refresh-extension-update">重新检查</button>
+      </div>
+    </section>
+  `;
+}
+
+function renderMustUpdatePanel() {
+  return `
+    <section class="glass section stack">
+      <h2>请先更新插件</h2>
+      <p class="hint">当前插件版本过旧，为避免上传或监听失败，请更新后继续使用。历史记录仍可查看。</p>
+    </section>
+  `;
+}
+
 function renderCurrentView() {
+  if (isExtensionMustUpdate() && ['capture', 'upload'].includes(appState.view)) return renderMustUpdatePanel();
   if (appState.view === 'home') return renderHome();
   if (appState.view === 'capture') return renderCapture();
   if (appState.view === 'upload') return renderUpload();
@@ -581,6 +615,8 @@ function renderProcessingSettingsCard(prefix, selectedTemplate, selectedFollowup
 function renderHistory() {
   const records = filteredHistoryRecords();
   const selectedCount = selectedRecordIds().length;
+  const groupBy = effectiveHistoryGroupBy();
+  const groups = groupHistoryRecords(records, groupBy);
   return `
     <section class="glass section stack">
       <div class="item-title">
@@ -590,10 +626,47 @@ function renderHistory() {
       <div class="history-toolbar">
         <button class="btn ${appState.historyFilter === 'all' ? 'primary' : ''}" type="button" data-action="history-filter" data-filter="all">全部</button>
         <button class="btn ${appState.historyFilter === 'test' ? 'primary' : ''}" type="button" data-action="history-filter" data-filter="test">只看测试数据</button>
+        ${renderHistoryGroupControls(groupBy)}
         <button class="btn" type="button" data-action="bulk-archive-records" ${selectedCount ? '' : 'disabled'}>归档已选 ${selectedCount || ''}</button>
         ${appState.permissions.canManageSettings ? `<button class="btn danger" type="button" data-action="bulk-purge-records" ${selectedCount ? '' : 'disabled'}>彻底删除已选 ${selectedCount || ''}</button>` : ''}
       </div>
-      ${records.length ? renderRecordList(records) : '<div class="empty">暂无录音记录</div>'}
+      ${records.length ? renderHistoryGroups(groups, groupBy) : '<div class="empty">暂无录音记录</div>'}
+    </section>
+  `;
+}
+
+function renderHistoryGroupControls(groupBy) {
+  if (!appState.permissions.canViewAllRecords && !appState.permissions.canViewDepartmentRecords) return '';
+  return [
+    ['employee', '按人'],
+    ['department', '按部门'],
+    ['none', '全部时间线'],
+  ].map(([value, label]) =>
+    `<button class="btn ${groupBy === value ? 'primary' : ''}" type="button" data-action="history-group" data-group="${value}">${label}</button>`
+  ).join('');
+}
+
+function renderHistoryGroups(groups, groupBy) {
+  if (groupBy === 'none') return renderRecordList(groups[0]?.records || []);
+  return `
+    <div class="history-group-list">
+      ${groups.map((group) => renderHistoryGroup(group)).join('')}
+    </div>
+  `;
+}
+
+function renderHistoryGroup(group) {
+  const expanded = historyGroupExpanded(group);
+  const counts = group.counts;
+  return `
+    <section class="history-group">
+      <button class="history-group-header" type="button" data-action="toggle-history-group" data-group-id="${escapeHtml(group.id)}" data-expanded="${expanded ? '1' : '0'}">
+        <span>${expanded ? '收起' : '展开'}</span>
+        <strong>${escapeHtml(group.title)}</strong>
+        <em>${counts.total} 条 · 完成 ${counts.completed} · 待重试 ${counts.transcribed} · 处理中 ${counts.inProgress} · 失败 ${counts.failed}</em>
+        <small>最近 ${escapeHtml(formatDate(group.latestCreatedAt))}</small>
+      </button>
+      ${expanded ? renderRecordList(group.records) : ''}
     </section>
   `;
 }
@@ -629,6 +702,69 @@ function renderRecordList(records) {
 function filteredHistoryRecords() {
   if (appState.historyFilter !== 'test') return appState.records;
   return appState.records.filter((record) => isLikelyTestRecord(record));
+}
+
+function effectiveHistoryGroupBy() {
+  if (appState.historyGroupBy && appState.historyGroupBy !== 'auto') return appState.historyGroupBy;
+  if (appState.permissions.canViewAllRecords || appState.permissions.canViewDepartmentRecords) return 'employee';
+  return 'none';
+}
+
+function groupHistoryRecords(records, groupBy) {
+  if (groupBy === 'department') return groupRecords(records, (record) => ({
+    id: record.department?.id || 'department:none',
+    title: record.department?.name || '未分配部门',
+  }));
+  if (groupBy === 'employee') return groupRecords(records, (record) => ({
+    id: record.owner?.id || 'employee:none',
+    title: record.owner?.displayName || '未知员工',
+  }));
+  return [{
+    id: 'all',
+    title: '全部记录',
+    records,
+    counts: historyGroupCounts(records),
+    latestCreatedAt: records[0]?.createdAt || '',
+  }];
+}
+
+function groupRecords(records, identityForRecord) {
+  const groups = new Map();
+  records.forEach((record) => {
+    const identity = identityForRecord(record);
+    if (!groups.has(identity.id)) {
+      groups.set(identity.id, {
+        id: identity.id,
+        title: identity.title,
+        records: [],
+        counts: null,
+        latestCreatedAt: '',
+      });
+    }
+    const group = groups.get(identity.id);
+    group.records.push(record);
+    if (!group.latestCreatedAt || String(record.createdAt || '').localeCompare(String(group.latestCreatedAt)) > 0) {
+      group.latestCreatedAt = record.createdAt || '';
+    }
+  });
+  return [...groups.values()]
+    .map((group) => ({ ...group, counts: historyGroupCounts(group.records) }))
+    .sort((left, right) => String(right.latestCreatedAt).localeCompare(String(left.latestCreatedAt)));
+}
+
+function historyGroupCounts(records) {
+  return {
+    total: records.length,
+    completed: records.filter((record) => record.status === 'completed').length,
+    transcribed: records.filter((record) => record.status === 'transcribed').length,
+    inProgress: records.filter((record) => isInProgress(record.status)).length,
+    failed: records.filter((record) => record.status === 'failed').length,
+  };
+}
+
+function historyGroupExpanded(group) {
+  if (Object.hasOwn(appState.historyExpandedGroups, group.id)) return Boolean(appState.historyExpandedGroups[group.id]);
+  return group.counts.failed > 0 || group.counts.transcribed > 0 || group.counts.inProgress > 0;
 }
 
 function isLikelyTestRecord(record) {
@@ -894,9 +1030,7 @@ function renderSummaryWorkspace(record) {
   const summary = record.summary || {};
   const summaryMarkdown = summary.summary_markdown || '';
   const hasTranscript = Boolean(record.transcript?.corrected_text || record.transcript?.raw_text || normalizedTranscriptSegments(record).length);
-  const hasOverviewCard = Boolean(summary.overview_card_json && Object.keys(summary.overview_card_json).length);
-  const hasMindMap = Boolean(mindMapState(summary.mind_map_json, record.title).mindMap);
-  const hasSummary = Boolean(summaryMarkdown || hasOverviewCard || hasMindMap);
+  const hasSummary = hasSummaryContent(record);
   const wordCount = countReadableWords(record);
   const generatedAt = record.completedAt || summary.updated_at || summary.created_at || record.lastProgressAt || '';
   return `
@@ -1024,9 +1158,24 @@ function renderSummaryPanel(record) {
         ${renderProcessingPicker('detail', record.templateType || currentTemplateType(), record.followupType || currentFollowupType())}
         <button class="btn primary" type="button" data-action="summarize-record" ${appState.busy ? 'disabled' : ''}>${summaryMarkdown ? '重新生成' : '生成纪要'}</button>
       </div>
+      ${renderSummaryQualityNotice(record)}
       ${showFollowup ? renderFollowupResultPanel(record) : renderMeetingResultPanel(record)}
     </div>
   `;
+}
+
+function renderSummaryQualityNotice(record) {
+  const summary = record.summary || {};
+  const status = summaryQualityStatus(summary);
+  if (!status || status === 'ai_ok') return '';
+  const reason = summary.quality_reason || record.errorMessage || '';
+  if (status === 'fallback_template' || status === 'invalid') {
+    return `<div class="status error">AI 总结未成功，逐字稿已保留。${reason ? ` ${escapeHtml(reason)}` : ''}</div>`;
+  }
+  if (status === 'low_information') {
+    return `<div class="status warning">总结内容较少，建议回听核对。${reason ? ` ${escapeHtml(reason)}` : ''}</div>`;
+  }
+  return '';
 }
 
 function renderMeetingResultPanel(record) {
@@ -1317,7 +1466,17 @@ function hasTranscriptContent(record) {
 
 function hasSummaryContent(record) {
   const summary = record.summary || {};
+  if (!summaryIsUsable(summary)) return false;
   return Boolean(summary.summary_markdown || summary.overview_card_json || mindMapState(summary.mind_map_json, record.title).mindMap);
+}
+
+function summaryQualityStatus(summary = {}) {
+  return String(summary.quality_status || summary.qualityStatus || '');
+}
+
+function summaryIsUsable(summary = {}) {
+  const status = summaryQualityStatus(summary);
+  return status !== 'fallback_template' && status !== 'invalid';
 }
 
 function extractSummaryLines(markdown, keywords) {
@@ -1942,6 +2101,39 @@ function followupTypeForTemplateUi(templateType) {
   return 'none';
 }
 
+function currentExtensionVersion() {
+  return chromeApi?.runtime?.getManifest?.().version || appState.runtime?.version || '0.0.0';
+}
+
+function compareVersions(left, right) {
+  const a = String(left || '0').split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const b = String(right || '0').split('.').map((part) => Number.parseInt(part, 10) || 0);
+  const length = Math.max(a.length, b.length);
+  for (let index = 0; index < length; index += 1) {
+    if ((a[index] || 0) > (b[index] || 0)) return 1;
+    if ((a[index] || 0) < (b[index] || 0)) return -1;
+  }
+  return 0;
+}
+
+function isExtensionMustUpdate() {
+  return Boolean(appState.extensionUpdate?.mustUpdate);
+}
+
+function downloadExtensionUpdate() {
+  const url = appState.extensionUpdate?.downloadUrl || '';
+  if (!url) return;
+  const filename = `voice-to-word-extension-${appState.extensionUpdate.latestVersion || 'latest'}.zip`;
+  if (chromeApi?.downloads?.download) {
+    chromeApi.downloads.download({ url, filename: sanitizeFileName(filename), saveAs: true });
+    return;
+  }
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = sanitizeFileName(filename);
+  link.click();
+}
+
 function templateTypeForFollowupUi(followupType) {
   if (followupType === 'matchmaker') return 'matchmaker_profile';
   if (followupType === 'recruitment') return 'recruitment_followup';
@@ -2043,6 +2235,7 @@ function bindLogin() {
       await storageSet({ accessToken: body.accessToken, currentUser: body.employee, apiBaseUrl: appState.apiBaseUrl });
       await loadMe();
       await loadRuntimeSafe();
+      await loadExtensionUpdateSafe();
       await loadDepartments();
       await loadRecords();
       setStatus('登录成功', 'success');
@@ -2091,6 +2284,11 @@ function bindCommon() {
   onClick('button[data-action="logout"]', () => logout(true));
   onClick('button[data-action="copy-client-diagnostics"]', copyClientDiagnostics);
   onClick('button[data-action="clear-client-errors"]', clearClientErrors);
+  onClick('button[data-action="refresh-extension-update"]', async () => {
+    await loadExtensionUpdateSafe();
+    render();
+  });
+  onClick('button[data-action="download-extension-update"]', () => downloadExtensionUpdate());
 }
 
 function bindCurrentView() {
@@ -2126,6 +2324,19 @@ function bindCurrentView() {
   onClick('button[data-action="history-filter"]', (_event, button) => {
     appState.historyFilter = button.dataset.filter || 'all';
     appState.selectedRecordIds = {};
+    render();
+  });
+
+  onClick('button[data-action="history-group"]', (_event, button) => {
+    appState.historyGroupBy = button.dataset.group || 'auto';
+    appState.historyExpandedGroups = {};
+    appState.selectedRecordIds = {};
+    render();
+  });
+
+  onClick('button[data-action="toggle-history-group"]', (_event, button) => {
+    const id = button.dataset.groupId || '';
+    appState.historyExpandedGroups[id] = button.dataset.expanded !== '1';
     render();
   });
 
@@ -3630,6 +3841,25 @@ async function loadRuntimeSafe() {
   }
 }
 
+async function loadExtensionUpdateSafe() {
+  try {
+    const body = await api('/api/extension/latest', { skipAuth: true });
+    const currentVersion = currentExtensionVersion();
+    const latest = body.latestExtension || {};
+    appState.extensionUpdate = {
+      currentVersion,
+      latestVersion: latest.version || currentVersion,
+      hasUpdate: compareVersions(latest.version || currentVersion, currentVersion) > 0,
+      mustUpdate: compareVersions(latest.minSupportedVersion || '0.0.0', currentVersion) > 0,
+      changelog: Array.isArray(latest.changelog) ? latest.changelog : [],
+      downloadUrl: latest.downloadUrl || '',
+      sha256: latest.sha256 || '',
+    };
+  } catch {
+    appState.extensionUpdate = null;
+  }
+}
+
 function loadBackgroundStateSafe() {
   if (!chromeApi?.runtime?.sendMessage) return Promise.resolve();
   return new Promise((resolve) => {
@@ -3701,6 +3931,7 @@ function renderRecordProgress(record) {
         ${veryLongRunning && record.asrTaskId ? '<button class="btn" type="button" data-action="transcribe-record">重新查询 DashScope 状态</button>' : ''}
       </div>
       ${veryLongRunning ? '<div class="hint">长录音或服务排队中，任务 ID 已保存，可稍后回来查看或重新查询状态。</div>' : longRunning ? '<div class="hint">仍在转写，可离开页面稍后查看。</div>' : ''}
+      ${record.status === 'transcribed' ? renderRecordRetryButton(record) : ''}
       ${record.status === 'failed' ? renderRecordRetryButton(record) : ''}
     </div>
   `;
@@ -3723,18 +3954,20 @@ function renderProcessingTimeline(record) {
 }
 
 function progressStepClass(current, step) {
-  const order = ['uploaded', 'transcribing', 'summarizing', 'completed'];
+  const order = ['uploaded', 'transcribing', 'summarizing', 'transcribed', 'completed'];
   if (current === 'failed') return 'failed';
   return order.indexOf(current) >= order.indexOf(step) ? 'active' : '';
 }
 
 function progressStepsFor(record) {
+  if (record.status === 'transcribed') return ['uploaded', 'transcribing', 'transcribed', 'completed'];
   return record.status === 'failed' ? ['uploaded', 'transcribing', 'summarizing', 'failed'] : ['uploaded', 'transcribing', 'summarizing', 'completed'];
 }
 
 function progressDescription(record) {
   if (record.status === 'uploaded') return '录音已上传，后台准备转写。';
   if (record.status === 'transcribing') return '正在把录音转成带时间戳的逐字稿。';
+  if (record.status === 'transcribed') return record.errorMessage || '逐字稿已生成，AI 总结待重试。';
   if (record.status === 'summarizing') return '正在生成结果，请稍等。';
   if (record.status === 'completed') return '录音、逐字稿和结果已就绪。';
   if (record.status === 'failed') return record.errorMessage || '处理失败，请检查配置或重新生成。';
@@ -4176,7 +4409,7 @@ function statusLabel(status) {
     uploading: '上传中',
     uploaded: '已上传',
     transcribing: '转写中',
-    transcribed: '已转写',
+    transcribed: '已转写，待生成总结',
     summarizing: '总结中',
     completed: '完成',
     failed: '失败',

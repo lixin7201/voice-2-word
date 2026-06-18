@@ -17,6 +17,7 @@ const { normalizeMindMap } = require('./lib/mind-map');
 const { deleteR2Objects, isR2Configured, presignR2Url, putR2Object } = require('./lib/r2');
 const { isDashScopeConfigured, fetchDashScopeTranscription, resolveDashScopeBaseUrl, submitDashScopeTask, waitForDashScopeTask } = require('./lib/dashscope');
 const { generateSummary, testLlmProviderConnection } = require('./lib/llm');
+const { assessSummaryQuality, isSummaryUsable } = require('./lib/summary-quality');
 const {
   DEFAULT_LLM_PROVIDER_TEMPLATES,
   GENERATION_PROTOCOLS,
@@ -37,10 +38,12 @@ const {
   stripMarkdown,
 } = require('./lib/exporters');
 const { resolveRuntimeConfig, saveSystemSettings, serializeSystemSettings } = require('./lib/system-settings');
+const packageJson = require('../package.json');
 
 const DEFAULT_DATA_FILE = path.join(process.cwd(), 'data', 'dev-db.json');
 const DEFAULT_UPLOAD_DIR = path.join(process.cwd(), 'uploads');
 const DEFAULT_EXPORT_DIR = path.join(process.cwd(), 'exports');
+const PACKAGE_VERSION = packageJson.version || '0.1.0';
 const MAX_AUDIO_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_AUDIO_SECONDS = 12 * 60 * 60;
 const MAX_MULTIPART_OVERHEAD_BYTES = 1024 * 1024;
@@ -140,7 +143,7 @@ async function routeRequest(req, res, store, config) {
     sendJson(res, 200, {
       ok: true,
       service: 'voice-2-word',
-      version: '0.1.0',
+      version: PACKAGE_VERSION,
       r2Configured: isR2Configured(runtimeConfig),
       dashscopeConfigured: isDashScopeConfigured(runtimeConfig),
       llmConfigured: hasConfiguredLlmProvider(runtimeConfig, store),
@@ -153,7 +156,7 @@ async function routeRequest(req, res, store, config) {
     const settingsMeta = store.table('system_meta')[0] || {};
     sendJson(res, 200, {
       service: 'voice-2-word',
-      version: '0.1.0',
+      version: PACKAGE_VERSION,
       settingsVersion: Number(settingsMeta.settings_version || 1),
       publicBaseUrl: runtimeConfig.publicBaseUrl,
       features: {
@@ -162,6 +165,21 @@ async function routeRequest(req, res, store, config) {
         settingsCenter: true,
       },
     });
+    return;
+  }
+
+  if (req.method === 'GET' && pathname === '/api/extension/latest') {
+    sendJson(res, 200, extensionLatestPayload(runtimeConfig));
+    return;
+  }
+
+  if (['GET', 'HEAD'].includes(req.method) && pathname.startsWith('/releases/extension/')) {
+    serveReleaseFile(pathname, '/releases/extension/', path.join(process.cwd(), 'releases', 'extension'), req.method, res);
+    return;
+  }
+
+  if (['GET', 'HEAD'].includes(req.method) && pathname.startsWith('/releases/extension-crx/')) {
+    serveReleaseFile(pathname, '/releases/extension-crx/', path.join(process.cwd(), 'releases', 'extension-crx'), req.method, res);
     return;
   }
 
@@ -1093,6 +1111,32 @@ function filterRecord(record, params, store) {
   return true;
 }
 
+function audioStorageKey(record) {
+  const date = new Date().toISOString().slice(0, 10);
+  const ext = safeExtension(record.original_file_name || record.r2_key || '') || 'mp3';
+  return `audio/${date}/${record.id}/source.${ext}`;
+}
+
+function classifyR2UploadError(error) {
+  const message = String(error?.message || error || '');
+  if (message.includes('SignatureDoesNotMatch')) {
+    return {
+      publicMessage: '录音上传到云存储失败，可能是文件名特殊字符或存储签名配置问题。录音已到达后端，请联系管理员重试。',
+      technicalCode: 'r2_signature_mismatch',
+    };
+  }
+  if (message.includes('AccessDenied') || message.includes('InvalidAccessKeyId')) {
+    return {
+      publicMessage: '云存储密钥或权限异常，请联系管理员检查 R2 配置。',
+      technicalCode: 'r2_permission_error',
+    };
+  }
+  return {
+    publicMessage: '录音上传到云存储失败，请稍后重试或联系管理员。',
+    technicalCode: 'r2_upload_failed',
+  };
+}
+
 async function enqueueRecordProcessing(record, store, config) {
   if (config.devFakeAsr) {
     await processUploadedRecord(record, store, config);
@@ -1158,13 +1202,28 @@ async function processUploadedRecord(record, store, config) {
   let audioUrl = '';
   let storageKey = record.r2_key;
   if (isR2Configured(config)) {
-    storageKey = storageKey || `audio/${new Date().toISOString().slice(0, 10)}/${record.id}/${record.original_file_name || `${record.id}.mp3`}`;
+    storageKey = storageKey || audioStorageKey(record);
     const stat = fs.existsSync(localPath) ? fs.statSync(localPath) : { size: 0 };
     const body = fs.existsSync(localPath) ? fs.createReadStream(localPath) : Buffer.alloc(0);
     addProcessingEvent(store, record.id, 'uploaded', '正在上传录音到 R2 存储。', { storageKey });
-    await putR2Object(config, storageKey, body, record.mime_type || 'application/octet-stream', undefined, {
-      contentLength: stat.size,
-    });
+    try {
+      await putR2Object(config, storageKey, body, record.mime_type || 'application/octet-stream', undefined, {
+        contentLength: stat.size,
+      });
+    } catch (error) {
+      const classified = classifyR2UploadError(error);
+      store.update('audio_records', record.id, {
+        status: 'failed',
+        error_message: classified.publicMessage,
+        last_progress_at: new Date().toISOString(),
+      });
+      addProcessingEvent(store, record.id, 'failed', classified.publicMessage, {
+        storageKey,
+        technicalCode: classified.technicalCode,
+        rawMessage: String(error?.message || error || '').slice(0, 500),
+      });
+      return;
+    }
     current = store.update('audio_records', record.id, {
       r2_key: storageKey,
       status: 'uploaded',
@@ -1189,7 +1248,12 @@ async function processUploadedRecord(record, store, config) {
       last_progress_at: new Date().toISOString(),
     }) || current;
     addProcessingEvent(store, record.id, 'summarizing', '演示模式已生成逐字稿，正在生成总结。');
-    const summary = buildLocalSummary(current, transcriptText);
+    const summary = {
+      ...buildLocalSummary(current, transcriptText),
+      modelProvider: 'local-dev',
+      modelName: 'local-template',
+      modelError: '',
+    };
     upsertByAudioRecord(store, 'transcripts', record.id, {
       audio_record_id: record.id,
       asr_provider: 'local-dev',
@@ -1201,31 +1265,7 @@ async function processUploadedRecord(record, store, config) {
       duration_ms: 0,
       cost_cny: 0,
     });
-    upsertByAudioRecord(store, 'summaries', record.id, {
-      audio_record_id: record.id,
-      template_type: record.template_type,
-      summary_markdown: summary.summaryMarkdown,
-      overview_card_json: summary.overviewCard,
-      mind_map_json: normalizeMindMap(summary.mindMap, current.title || record.title) || {},
-      structured_json: summary.structuredJson,
-      model_provider: summary.modelProvider || 'local-dev',
-      model_name: summary.modelName || 'local-template',
-      model_error: summary.modelError || '',
-      version: 1,
-    });
-    if (shouldGenerateFollowup(current)) {
-      upsertFollowupFromSummary(store, current, summary);
-    } else {
-      deleteFollowupForRecord(store, record.id);
-    }
-    applyAiTitleSuggestion(current, summary.titleSuggestion, store);
-    store.update('audio_records', record.id, {
-      status: 'completed',
-      completed_at: new Date().toISOString(),
-      last_progress_at: new Date().toISOString(),
-      error_message: '',
-    });
-    addProcessingEvent(store, record.id, 'completed', '录音处理完成。');
+    persistSummaryResult(store, current, summary, transcriptText, { successMessage: '录音处理完成。' });
     return;
   }
 
@@ -1291,6 +1331,19 @@ async function summarizeExistingRecord(record, store, config) {
   const owner = store.findById('employees', record.owner_employee_id);
   const profileContext = buildEmployeeProfileContext(owner, store);
   const summary = await generateSummary(config, record, transcriptText, { profileContext, store });
+  persistSummaryResult(store, record, summary, transcriptText);
+}
+
+function persistSummaryResult(store, record, summary, transcriptText, options = {}) {
+  const modelProvider = summary.modelProvider || 'local-template';
+  const modelName = summary.modelName || 'local-template';
+  const modelError = summary.modelError || '';
+  const quality = assessSummaryQuality({
+    ...summary,
+    modelProvider,
+    modelName,
+    modelError,
+  }, transcriptText);
   upsertByAudioRecord(store, 'summaries', record.id, {
     audio_record_id: record.id,
     template_type: record.template_type,
@@ -1298,24 +1351,69 @@ async function summarizeExistingRecord(record, store, config) {
     overview_card_json: summary.overviewCard,
     mind_map_json: normalizeMindMap(summary.mindMap, record.title) || {},
     structured_json: summary.structuredJson,
-    model_provider: summary.modelProvider || 'local-template',
-    model_name: summary.modelName || 'local-template',
-    model_error: summary.modelError || '',
+    model_provider: modelProvider,
+    model_name: modelName,
+    model_error: modelError,
+    quality_status: quality.qualityStatus,
+    quality_reason: quality.qualityReason,
+    input_transcript_chars: quality.inputTranscriptChars,
+    summary_chars: quality.summaryChars,
+    placeholder_count: quality.placeholderCount,
+    provider_errors_json: Array.isArray(summary.providerErrors) ? summary.providerErrors : [],
     version: 1,
   });
-  if (shouldGenerateFollowup(record)) {
+  const usable = !['fallback_template', 'invalid'].includes(quality.qualityStatus);
+  if (usable && shouldGenerateFollowup(record)) {
     upsertFollowupFromSummary(store, record, summary);
-  } else {
+  } else if (!shouldGenerateFollowup(record)) {
     deleteFollowupForRecord(store, record.id);
   }
-  applyAiTitleSuggestion(record, summary.titleSuggestion, store);
+  if (usable) applyAiTitleSuggestion(record, summary.titleSuggestion, store);
+  const finalState = summaryRecordState(quality);
   store.update('audio_records', record.id, {
-    status: 'completed',
-    completed_at: new Date().toISOString(),
+    status: finalState.status,
+    completed_at: finalState.status === 'completed' ? new Date().toISOString() : null,
     last_progress_at: new Date().toISOString(),
-    error_message: '',
+    error_message: finalState.errorMessage,
   });
-  addProcessingEvent(store, record.id, 'completed', '总结已生成。');
+  addProcessingEvent(store, record.id, finalState.eventPhase, options.successMessage || finalState.eventMessage, {
+    qualityStatus: quality.qualityStatus,
+    qualityReason: quality.qualityReason,
+    providerErrors: Array.isArray(summary.providerErrors) ? summary.providerErrors : [],
+  });
+}
+
+function summaryRecordState(quality) {
+  if (quality.qualityStatus === 'fallback_template') {
+    return {
+      status: 'transcribed',
+      eventPhase: 'transcribed',
+      eventMessage: 'AI 总结模型失败，已保留逐字稿，可稍后重试。',
+      errorMessage: 'AI 总结模型暂不可用，已保留逐字稿，可重试生成总结。',
+    };
+  }
+  if (quality.qualityStatus === 'invalid') {
+    return {
+      status: 'transcribed',
+      eventPhase: 'transcribed',
+      eventMessage: '总结结果为空，已保留逐字稿。',
+      errorMessage: '总结生成结果为空，请重试。',
+    };
+  }
+  if (quality.qualityStatus === 'low_information') {
+    return {
+      status: 'completed',
+      eventPhase: 'completed',
+      eventMessage: '总结已生成，但内容较少，建议人工核对。',
+      errorMessage: '',
+    };
+  }
+  return {
+    status: 'completed',
+    eventPhase: 'completed',
+    eventMessage: '总结已生成。',
+    errorMessage: '',
+  };
 }
 
 function startSummarizeJob(record, store, config) {
@@ -1360,6 +1458,9 @@ async function createExportFile(record, employee, body, store, config) {
   if (target === 'all_files' && format !== 'zip') throw httpError(400, '全部文件仅支持 ZIP 下载');
   if (format === 'zip' && target !== 'all_files') throw httpError(400, 'ZIP 仅用于下载全部文件');
   if (format === 'svg' && !['overview_card', 'mind_map'].includes(target)) throw httpError(400, '只有总结卡片和思维导图支持 SVG 下载');
+  if (['summary', 'overview_card', 'mind_map'].includes(target) && !isSummaryUsable(summaryForRecord(record.id, store))) {
+    throw httpError(409, 'AI 总结未成功，暂不能下载总结。请先重新生成总结，逐字稿仍可下载。');
+  }
   const markdown = buildExportText(record, store, target, true);
   let buffer;
   if (format === 'zip') {
@@ -1394,6 +1495,10 @@ async function createExportFile(record, employee, body, store, config) {
     storage,
     created_by: employee.id,
   });
+}
+
+function summaryForRecord(recordId, store) {
+  return store.table('summaries').find((item) => item.audio_record_id === recordId) || null;
 }
 
 function upsertByAudioRecord(store, tableName, audioRecordId, row) {
@@ -2333,6 +2438,83 @@ function serveWebAsset(pathname, method, res) {
   }
   fs.createReadStream(filePath).pipe(res);
   return true;
+}
+
+function extensionLatestPayload(config) {
+  const releaseDir = path.join(process.cwd(), 'releases', 'extension');
+  const latestFile = path.join(releaseDir, 'latest.json');
+  const currentVersion = extensionManifestVersion();
+  const fallback = {
+    currentBackendVersion: PACKAGE_VERSION,
+    latestExtension: {
+      version: currentVersion,
+      minSupportedVersion: currentVersion,
+      releasedAt: '',
+      changelog: [],
+      downloadUrl: '',
+      sha256: '',
+    },
+  };
+  if (!fs.existsSync(latestFile)) return fallback;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(latestFile, 'utf8'));
+    const latest = parsed.latestExtension || parsed;
+    return {
+      currentBackendVersion: PACKAGE_VERSION,
+      latestExtension: {
+        version: latest.version || currentVersion,
+        minSupportedVersion: latest.minSupportedVersion || currentVersion,
+        releasedAt: latest.releasedAt || '',
+        changelog: Array.isArray(latest.changelog) ? latest.changelog : [],
+        downloadUrl: absoluteReleaseUrl(latest.downloadUrl || '', config),
+        sha256: latest.sha256 || '',
+      },
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function absoluteReleaseUrl(value, config) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+  if (/^https?:\/\//i.test(text)) return text;
+  return `${String(config.publicBaseUrl || '').replace(/\/$/, '')}/${text.replace(/^\/+/, '')}`;
+}
+
+function extensionManifestVersion() {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'manifest.json'), 'utf8'));
+    return manifest.version || PACKAGE_VERSION;
+  } catch {
+    return PACKAGE_VERSION;
+  }
+}
+
+function serveReleaseFile(pathname, prefix, releaseDir, method, res) {
+  const fileName = path.basename(decodeURIComponent(pathname.slice(prefix.length)));
+  if (!fileName || !/^[a-z0-9._-]+$/i.test(fileName)) throw httpError(404, '发布文件不存在');
+  const filePath = path.join(releaseDir, fileName);
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) throw httpError(404, '发布文件不存在');
+  const ext = safeExtension(fileName);
+  res.writeHead(200, {
+    'Content-Type': ext === 'json'
+      ? 'application/json; charset=utf-8'
+      : ext === 'zip'
+        ? 'application/zip'
+        : ext === 'xml'
+          ? 'application/xml; charset=utf-8'
+          : ext === 'crx'
+            ? 'application/x-chrome-extension'
+        : 'application/octet-stream',
+    'Cache-Control': 'no-store',
+    'Content-Length': fs.statSync(filePath).size,
+  });
+  if (method === 'HEAD') {
+    res.end();
+    return;
+  }
+  fs.createReadStream(filePath).pipe(res);
 }
 
 function setCorsHeaders(req, res, config) {

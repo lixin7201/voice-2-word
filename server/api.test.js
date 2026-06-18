@@ -16,11 +16,17 @@ function startTestServer(options = {}) {
     exportDir: path.join(dir, 'exports'),
     jwtSecret: 'test-secret',
     publicBaseUrl: 'http://localhost:0',
-    devFakeAsr: true,
+    devFakeAsr: options.devFakeAsr ?? true,
     recoverProcessing: options.recoverProcessing,
     easyAiBaseUrl: options.easyAiBaseUrl,
     easyAiApiKey: options.easyAiApiKey,
     easyAiModel: options.easyAiModel,
+    dashscopeApiKey: options.dashscopeApiKey,
+    r2AccountId: options.r2AccountId,
+    r2AccessKeyId: options.r2AccessKeyId,
+    r2SecretAccessKey: options.r2SecretAccessKey,
+    r2Bucket: options.r2Bucket,
+    r2Endpoint: options.r2Endpoint,
   });
   return new Promise((resolve) => {
     server.listen(0, '127.0.0.1', () => {
@@ -139,6 +145,30 @@ function startLlmProviderServer() {
       resolve({
         server,
         baseUrl: `http://127.0.0.1:${port}/v1`,
+        requests,
+      });
+    });
+  });
+}
+
+function startR2UploadServer() {
+  const requests = [];
+  const server = require('node:http').createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    requests.push({
+      method: req.method,
+      url: req.url,
+      bodyLength: Buffer.concat(chunks).length,
+    });
+    res.writeHead(200).end();
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({
+        server,
+        endpoint: `http://127.0.0.1:${port}`,
         requests,
       });
     });
@@ -642,6 +672,46 @@ test('manual upload creates completed local-development record and export', asyn
   }
 });
 
+test('R2 uploads use safe object keys for special original file names', async () => {
+  const r2 = await startR2UploadServer();
+  const { server, baseUrl } = await startTestServer({
+    r2AccountId: 'account-id',
+    r2AccessKeyId: 'access-key',
+    r2SecretAccessKey: 'secret-key',
+    r2Bucket: 'voice-bucket',
+    r2Endpoint: r2.endpoint,
+  });
+  try {
+    const lanlan = await login(baseUrl, '岚岚');
+    const create = await request(baseUrl, '/api/records', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({
+        sourceType: 'manual_upload',
+        title: '特殊文件名上传',
+        templateType: 'meeting_minutes',
+      }),
+    });
+    const recordId = create.body.record.id;
+    const form = new FormData();
+    form.append('file', new Blob(['fake audio'], { type: 'audio/mpeg' }), "2026-06-18 09_18_40(1) it's ok!.mp3");
+    const upload = await fetch(`${baseUrl}/api/records/${recordId}/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: form,
+    });
+    const body = await upload.json();
+    assert.equal(upload.status, 200);
+    assert.equal(body.record.originalFileName, "2026-06-18 09_18_40(1) it's ok!.mp3");
+    assert.match(body.record.r2Key, new RegExp(`^audio/\\d{4}-\\d{2}-\\d{2}/${recordId}/source\\.mp3$`));
+    assert.equal(r2.requests.length, 1);
+    assert.doesNotMatch(r2.requests[0].url, /09_18_40|[()'!]/);
+  } finally {
+    server.close();
+    r2.server.close();
+  }
+});
+
 test('avatar upload rejects files over the 2MB limit', async () => {
   const { server, baseUrl } = await startTestServer();
   try {
@@ -1026,6 +1096,109 @@ test('summarize endpoint returns while the LLM job continues in the background',
     server.close();
     llm.release();
     llm.server.close();
+  }
+});
+
+test('failed LLM provider fallback keeps transcript and does not mark record completed', async () => {
+  const now = new Date().toISOString();
+  const data = createInitialData(now);
+  const owner = data.employees.find((employee) => employee.display_name === '离心');
+  const membership = data.employee_departments.find((item) => item.employee_id === owner.id);
+  const provider = data.llm_providers.find((item) => item.id === 'llm_easyai_gpt55');
+  Object.assign(provider, {
+    enabled: true,
+    api_key: 'bad-key',
+    base_url: 'http://127.0.0.1:9/v1',
+    timeout_ms: 100,
+  });
+  data.audio_records.push({
+    id: 'rec-summary-fallback',
+    owner_employee_id: owner.id,
+    owner_department_id: membership.department_id,
+    title: '总结失败保留逐字稿',
+    title_source: 'manual',
+    title_locked: true,
+    ai_title: '',
+    title_updated_at: now,
+    source_type: 'manual_upload',
+    source_page_url: '',
+    source_page_title: '',
+    source_media_url_hash: '',
+    original_file_name: 'fallback.mp3',
+    mime_type: 'audio/mpeg',
+    file_size: 10,
+    duration_seconds: 1,
+    r2_key: 'fallback.mp3',
+    status: 'completed',
+    template_type: 'meeting_minutes',
+    followup_type: 'none',
+    processing_started_at: now,
+    transcribe_started_at: now,
+    summarize_started_at: now,
+    last_progress_at: now,
+    asr_task_id: '',
+    processing_attempts: 1,
+    completed_at: now,
+    error_message: '',
+    created_at: now,
+    updated_at: now,
+  });
+  data.transcripts.push({
+    id: 'transcript-summary-fallback',
+    audio_record_id: 'rec-summary-fallback',
+    asr_provider: 'dashscope',
+    asr_task_id: '',
+    raw_text: '团队讨论总结模型失败时，必须保留逐字稿，并提示用户稍后重试生成总结。',
+    corrected_text: '团队讨论总结模型失败时，必须保留逐字稿，并提示用户稍后重试生成总结。',
+    segments_json: [{ id: 'seg-1', startMs: 0, endMs: 1000, text: '保留逐字稿' }],
+    speaker_aliases_json: {},
+    duration_ms: 1000,
+    cost_cny: null,
+    created_at: now,
+    updated_at: now,
+  });
+
+  const { server, baseUrl } = await startTestServer({ initialData: data, recoverProcessing: false });
+  try {
+    const lixin = await login(baseUrl, '离心');
+    const start = await request(baseUrl, '/api/records/rec-summary-fallback/summarize', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ templateType: 'meeting_minutes', followupType: 'none' }),
+    });
+    assert.equal(start.response.status, 200);
+
+    await waitFor(async () => {
+      const detail = await request(baseUrl, '/api/records/rec-summary-fallback', {
+        headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      });
+      return detail.body.record.status === 'transcribed';
+    });
+
+    const detail = await request(baseUrl, '/api/records/rec-summary-fallback', {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    assert.equal(detail.body.record.status, 'transcribed');
+    assert.match(detail.body.record.errorMessage, /AI 总结模型暂不可用/);
+    assert.equal(detail.body.record.summary.quality_status, 'fallback_template');
+    assert.equal(detail.body.record.summary.model_provider, 'local-template');
+    assert.ok(Array.isArray(detail.body.record.summary.provider_errors_json));
+
+    const summaryExport = await request(baseUrl, '/api/records/rec-summary-fallback/export', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ target: 'summary', format: 'md' }),
+    });
+    assert.equal(summaryExport.response.status, 409);
+
+    const bundle = await request(baseUrl, '/api/records/rec-summary-fallback/export', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ target: 'all_files', format: 'zip' }),
+    });
+    assert.equal(bundle.response.status, 200);
+  } finally {
+    server.close();
   }
 });
 

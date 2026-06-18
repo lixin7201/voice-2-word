@@ -145,6 +145,25 @@ test('failed provider falls back to the next priority provider', async () => {
   assert.equal(store.providers[1].last_call_status, 'success');
 });
 
+test('all failed providers return local template with structured provider errors', async () => {
+  const store = createStore([
+    provider({ id: 'llm_easyai_gpt55', display_name: 'EasyAI GPT-5.5', provider_key: 'easyai', channel_id: 'easyai', base_url: 'https://aisoeasy.cc/v1', priority: 10 }),
+    provider({ id: 'llm_sub2api_gpt55', priority: 20 }),
+  ]);
+  const result = await generateSummary({}, record(), '逐字稿内容', { store }, async () => ({
+    ok: false,
+    status: 500,
+    json: async () => ({ error: { message: '模型请求失败' } }),
+  }));
+
+  assert.equal(result.modelProvider, 'local-template');
+  assert.equal(result.modelName, 'local-template');
+  assert.match(result.summaryMarkdown, /模型池测试录音/);
+  assert.deepEqual(result.providerErrors.map((error) => error.provider), ['EasyAI GPT-5.5', 'AI 大宜宾 sub2api - GPT-5.5']);
+  assert.ok(result.providerErrors.every((error) => error.message === '模型请求失败'));
+  assert.match(result.modelError, /EasyAI GPT-5.5: 模型请求失败/);
+});
+
 test('provider url helpers preserve configured v1 paths', () => {
   assert.equal(responsesUrl('http://127.0.0.1:8080/v1'), 'http://127.0.0.1:8080/v1/responses');
   assert.equal(chatCompletionsUrl('https://api.kimi.com/coding/v1'), 'https://api.kimi.com/coding/v1/chat/completions');

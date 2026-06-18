@@ -1,0 +1,14 @@
+{
+  "name": "大宜宾录音助手",
+  "version": "0.1.1",
+  "minSupportedVersion": "0.1.1",
+  "releasedAt": "2026-06-18T04:59:47.067Z",
+  "changelog": [
+    "修复 AI 总结失败但显示完成的问题",
+    "修复特殊文件名导致 R2 上传失败的问题",
+    "管理员历史记录支持按人展开",
+    "新增局域网版本更新提示"
+  ],
+  "downloadUrl": "http://lixindemac-studio.local:8127/releases/extension/voice-to-word-extension-0.1.1.zip",
+  "sha256": "c414b158be3cb3d39d058e810c14ef08431a9244a7a81b51f3427ef1fc733e36"
+}

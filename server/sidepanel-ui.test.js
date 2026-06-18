@@ -121,10 +121,13 @@ globalThis.__sidepanel = {
   candidateReadFailureMessage,
   exportRecord,
   fetchCandidateBlob,
+  hasSummaryContent,
   handleBackgroundState,
   normalizedTranscriptSegments,
   renderDetailTab,
   renderDetail,
+  renderExtensionUpdateNotice,
+  renderHistory,
   renderEmployees,
   renderHome,
   renderProfile,
@@ -632,6 +635,73 @@ test('summary workbench renders audio, clickable transcript, mind map, and downl
   assert.match(followupHtml, /中后期有效跟进/);
   assert.match(followupHtml, /下周回访/);
   assert.doesNotMatch(followupHtml, /会议概览/);
+});
+
+test('fallback template summaries are visible but not treated as downloadable summaries', () => {
+  const { api } = loadSidepanel();
+  api.appState.accessToken = 'token-123';
+  api.appState.templates = [{ value: 'meeting_minutes', label: '会议纪要' }];
+  api.appState.followupOptions = [{ value: 'none', label: '不生成跟单' }];
+  const record = {
+    id: 'rec_fallback',
+    title: '模型失败录音',
+    status: 'transcribed',
+    templateType: 'meeting_minutes',
+    followupType: 'none',
+    errorMessage: 'AI 总结模型暂不可用，已保留逐字稿，可重试生成总结。',
+    transcript: { corrected_text: '逐字稿已生成' },
+    summary: {
+      summary_markdown: '# 临时模板\n- 待核对',
+      quality_status: 'fallback_template',
+      quality_reason: '真实总结模型全部失败，系统仅生成临时模板',
+      overview_card_json: { heroTitle: '临时模板' },
+      mind_map_json: { title: '临时模板', center: '待核对', branches: [] },
+    },
+  };
+  const html = api.renderSummaryWorkspace(record);
+
+  assert.equal(api.hasSummaryContent(record), false);
+  assert.match(html, /AI 总结未成功/);
+  assert.match(html, /下载逐字稿/);
+  assert.match(html, /data-action="export-selected" data-target="summary" disabled/);
+});
+
+test('admin history defaults to employee groups with collapsible record lists', () => {
+  const { api } = loadSidepanel();
+  api.appState.permissions = { canViewAllRecords: true };
+  api.appState.records = [
+    {
+      id: 'rec-1',
+      title: '岚岚录音',
+      status: 'completed',
+      createdAt: '2026-06-18T01:00:00.000Z',
+      owner: { id: 'emp-lanlan', displayName: '岚岚' },
+      department: { id: 'dep-rec', name: '招聘部' },
+      templateType: 'meeting_minutes',
+      followupType: 'none',
+      titleSource: 'manual',
+    },
+    {
+      id: 'rec-2',
+      title: '泡泡录音',
+      status: 'transcribed',
+      createdAt: '2026-06-18T02:00:00.000Z',
+      owner: { id: 'emp-paopao', displayName: '泡泡' },
+      department: { id: 'dep-match', name: '红娘部门' },
+      templateType: 'meeting_minutes',
+      followupType: 'none',
+      titleSource: 'manual',
+    },
+  ];
+
+  const html = api.renderHistory();
+
+  assert.match(html, /data-action="history-group" data-group="employee"/);
+  assert.match(html, /泡泡/);
+  assert.match(html, /待重试 1/);
+  assert.match(html, /data-expanded="1"/);
+  assert.match(html, /岚岚/);
+  assert.match(html, /data-expanded="0"/);
 });
 
 test('detail page renders horizontal tabs and keeps panel state', () => {

@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { normalizeMindMap } = require('./mind-map');
+const { isSummaryUsable } = require('./summary-quality');
 
 const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
@@ -24,6 +25,7 @@ function buildExportText(record, store, target = 'full_record', markdown = true)
     '',
   ];
   if (target === 'overview_card') {
+    if (!isSummaryUsable(summary)) return unavailableSummaryText(record, summary, markdown);
     sections.push(
       heading('总结卡片', markdown),
       renderOverviewCard(summary?.overview_card_json, markdown),
@@ -32,6 +34,7 @@ function buildExportText(record, store, target = 'full_record', markdown = true)
     return sections.filter((item) => item !== undefined).join('\n');
   }
   if (target === 'mind_map') {
+    if (!isSummaryUsable(summary)) return unavailableSummaryText(record, summary, markdown);
     sections.push(
       heading('思维导图', markdown),
       renderMindMap(summary?.mind_map_json, markdown),
@@ -40,17 +43,21 @@ function buildExportText(record, store, target = 'full_record', markdown = true)
     return sections.filter((item) => item !== undefined).join('\n');
   }
   if (target !== 'transcript') {
-    sections.push(
-      heading('总结卡片', markdown),
-      renderOverviewCard(summary?.overview_card_json, markdown),
-      '',
-      heading('文字重点总结', markdown),
-      summary?.summary_markdown || '暂无总结',
-      '',
-      heading('思维导图', markdown),
-      renderMindMap(summary?.mind_map_json, markdown),
-      '',
-    );
+    if (isSummaryUsable(summary)) {
+      sections.push(
+        heading('总结卡片', markdown),
+        renderOverviewCard(summary?.overview_card_json, markdown),
+        '',
+        heading('文字重点总结', markdown),
+        summary?.summary_markdown || '暂无总结',
+        '',
+        heading('思维导图', markdown),
+        renderMindMap(summary?.mind_map_json, markdown),
+        '',
+      );
+    } else {
+      sections.push(unavailableSummaryText(record, summary, markdown), '');
+    }
   }
   if (target !== 'summary') sections.push(heading('逐字稿', markdown), renderTranscript(transcript, markdown), '');
   if (target !== 'summary' && target !== 'transcript' && shouldExportFollowup(record, followup)) {
@@ -61,12 +68,14 @@ function buildExportText(record, store, target = 'full_record', markdown = true)
 
 function buildExportSvg(record, store, target) {
   const summary = store.table('summaries').find((item) => item.audio_record_id === record.id);
+  if (!isSummaryUsable(summary)) return renderUnavailableSvg(record, target, summary);
   if (target === 'overview_card') return renderOverviewCardSvg(record, summary?.overview_card_json);
   if (target === 'mind_map') return renderMindMapSvg(record, summary?.mind_map_json);
   throw new Error('该内容不支持 SVG 导出');
 }
 
 function buildExportBundle(record, store) {
+  const summary = store.table('summaries').find((item) => item.audio_record_id === record.id);
   const bundleTargets = [
     { target: 'full_record', fileName: '01-full-record', formats: ['md', 'txt', 'docx', 'pdf'] },
     { target: 'summary', fileName: '02-summary', formats: ['md', 'txt', 'docx', 'pdf'] },
@@ -94,10 +103,14 @@ function buildExportBundle(record, store) {
       if (format === 'md') files[`${item.fileName}.md`] = Buffer.from(markdown);
       if (format === 'txt') files[`${item.fileName}.txt`] = Buffer.from(stripMarkdown(markdown));
       if (format === 'docx') files[`${item.fileName}.docx`] = item.target === 'summary'
-        ? createSummaryDocxBuffer(record, store, markdown)
+        ? isSummaryUsable(summary)
+          ? createSummaryDocxBuffer(record, store, markdown)
+          : createDocxBuffer(record.title, stripMarkdown(markdown))
         : createDocxBuffer(record.title, stripMarkdown(markdown));
       if (format === 'pdf') files[`${item.fileName}.pdf`] = item.target === 'summary'
-        ? createSummaryPdfBuffer(record, store, markdown)
+        ? isSummaryUsable(summary)
+          ? createSummaryPdfBuffer(record, store, markdown)
+          : createPdfBuffer(record.title, markdown)
         : createPdfBuffer(record.title, markdown);
       if (format === 'svg') files[`${item.fileName}.svg`] = Buffer.from(buildExportSvg(record, store, item.target));
     }
@@ -373,6 +386,33 @@ function renderTranscript(transcript, markdown) {
     .filter(Boolean);
   if (lines.length) return lines.join('\n');
   return transcript.corrected_text || transcript.raw_text || '暂无逐字稿';
+}
+
+function unavailableSummaryText(record, summary, markdown) {
+  const title = record?.title || record?.original_file_name || '录音记录';
+  const reason = summary?.quality_reason || 'AI 总结未成功，当前只保留逐字稿。';
+  return [
+    titleLine(title, markdown),
+    '',
+    heading('AI 总结未成功', markdown),
+    reason,
+    '',
+    '请先重新生成总结；逐字稿可以继续下载和人工核对。',
+  ].join('\n');
+}
+
+function renderUnavailableSvg(record, target, summary) {
+  const width = target === 'mind_map' ? 1400 : 1200;
+  const height = 360;
+  const title = target === 'mind_map' ? '思维导图暂不可用' : '总结卡片暂不可用';
+  const reason = summary?.quality_reason || 'AI 总结未成功，当前只保留逐字稿。';
+  return svgDocument(width, height, [
+    `<rect width="${width}" height="${height}" rx="18" fill="#fbfefd"/>`,
+    `<rect x="32" y="32" width="${width - 64}" height="${height - 64}" rx="16" fill="#fff7ed" stroke="#f4c47c"/>`,
+    `<text x="68" y="104" fill="#8a520d" font-size="30" font-weight="700">${escapeXml(title)}</text>`,
+    ...svgTextLines(record?.title || '录音记录', 68, 154, 48, 20, '#122934', 24),
+    ...svgTextLines(reason, 68, 222, 60, 18, '#5d6f78', 24),
+  ]);
 }
 
 function renderOverviewCardSvg(record, card) {

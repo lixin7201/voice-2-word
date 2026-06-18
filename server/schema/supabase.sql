@@ -104,6 +104,12 @@ create table if not exists summaries (
   model_provider text,
   model_name text,
   model_error text,
+  quality_status text not null default 'ai_ok',
+  quality_reason text,
+  input_transcript_chars integer not null default 0,
+  summary_chars integer not null default 0,
+  placeholder_count integer not null default 0,
+  provider_errors_json jsonb not null default '[]'::jsonb,
   version integer not null default 1,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

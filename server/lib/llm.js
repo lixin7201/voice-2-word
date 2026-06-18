@@ -22,7 +22,11 @@ async function generateSummary(config, record, transcriptText, context = {}, fet
       };
     } catch (error) {
       const message = safeProviderError(error, provider);
-      providerErrors.push(`${provider.displayName || provider.providerKey || provider.channelId}: ${message}`);
+      providerErrors.push({
+        provider: provider.displayName || provider.providerKey || provider.channelId || '',
+        model: provider.requestModel || '',
+        message,
+      });
       updateProviderCallStatus(store, provider, 'failed', message);
       if (provider.allowFallback === false) break;
     }
@@ -32,7 +36,8 @@ async function generateSummary(config, record, transcriptText, context = {}, fet
     ...buildLocalSummary(record, transcriptText),
     modelProvider: 'local-template',
     modelName: 'local-template',
-    modelError: providerErrors.join('；'),
+    modelError: providerErrors.map((error) => `${error.provider}: ${error.message}`).join('；'),
+    providerErrors,
   };
 }
 

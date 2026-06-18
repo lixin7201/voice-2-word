@@ -105,21 +105,26 @@ function toAmzDate(date) {
 }
 
 function encodePathSegment(value) {
-  return encodeURIComponent(value).replace(/%2F/g, '/');
+  return awsUriEncode(value).replace(/%2F/g, '/');
 }
 
 function encodeObjectKey(key) {
   return String(key)
     .split('/')
-    .map((segment) => encodeURIComponent(segment))
+    .map((segment) => awsUriEncode(segment))
     .join('/');
 }
 
 function canonicalQueryString(query) {
   return Object.entries(query)
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
+    .map(([key, value]) => `${awsUriEncode(key)}=${awsUriEncode(value)}`)
     .join('&');
+}
+
+function awsUriEncode(value) {
+  return encodeURIComponent(String(value))
+    .replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
 function signingKey(secret, dateStamp) {
