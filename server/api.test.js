@@ -574,9 +574,12 @@ test('web root serves login workbench without weakening API auth', async () => {
     assert.match(installHtml, /voice-to-word-chrome-policy\.mobileconfig/);
     assert.match(installHtml, /install-windows-force-policy\.reg/);
 
-    const macInstaller = await fetch(`${baseUrl}/releases/extension-crx/voice-to-word-chrome-policy.mobileconfig`, { method: 'HEAD' });
+    const macInstaller = await fetch(`${baseUrl}/releases/extension-crx/voice-to-word-chrome-policy.mobileconfig`);
     assert.equal(macInstaller.status, 200);
     assert.match(macInstaller.headers.get('content-type') || '', /application\/x-apple-aspen-config/);
+    const macInstallerText = await macInstaller.text();
+    assert.match(macInstallerText, /com\.apple\.ManagedClient\.preferences/);
+    assert.match(macInstallerText, /ExtensionSettings/);
 
     const windowsInstaller = await fetch(`${baseUrl}/releases/extension-crx/install-windows-force-policy.reg`, { method: 'HEAD' });
     assert.equal(windowsInstaller.status, 200);

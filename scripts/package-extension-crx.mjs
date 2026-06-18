@@ -136,19 +136,43 @@ function macChromeMobileconfig({ appId, updateUrl }) {
   <array>
     <dict>
       <key>PayloadDisplayName</key>
-      <string>Voice to Word Chrome Policy</string>
+      <string>Custom: com.google.Chrome</string>
       <key>PayloadIdentifier</key>
-      <string>cc.dayibin.voice-to-word.chrome.policy</string>
+      <string>cc.dayibin.voice-to-word.chrome.policy.preferences</string>
       <key>PayloadType</key>
-      <string>com.google.Chrome</string>
+      <string>com.apple.ManagedClient.preferences</string>
       <key>PayloadUUID</key>
       <string>9B6A9846-D1D2-46F9-A6D9-7D1D14DF7E73</string>
       <key>PayloadVersion</key>
       <integer>1</integer>
-      <key>ExtensionInstallForcelist</key>
-      <array>
-        <string>${appId};${updateUrl}</string>
-      </array>
+      <key>PayloadEnabled</key>
+      <true/>
+      <key>PayloadContent</key>
+      <dict>
+        <key>com.google.Chrome</key>
+        <dict>
+          <key>Forced</key>
+          <array>
+            <dict>
+              <key>mcx_preference_settings</key>
+              <dict>
+                <key>ExtensionSettings</key>
+                <dict>
+                  <key>${appId}</key>
+                  <dict>
+                    <key>installation_mode</key>
+                    <string>force_installed</string>
+                    <key>update_url</key>
+                    <string>${updateUrl}</string>
+                    <key>override_update_url</key>
+                    <true/>
+                  </dict>
+                </dict>
+              </dict>
+            </dict>
+          </array>
+        </dict>
+      </dict>
     </dict>
   </array>
   <key>PayloadDescription</key>
@@ -197,6 +221,14 @@ CRX 地址：
 ${crxUrl}
 \`\`\`
 
+给同事安装时，优先只发这个入口：
+
+\`\`\`text
+http://lixindemac-studio.local:8127/install
+\`\`\`
+
+页面会自动提供 Mac 和 Windows 两个安装按钮。
+
 ## 适用结论
 
 - Mac 和 Windows 都要走 Chrome 企业策略，才能做到静默安装和后续自动更新。
@@ -213,7 +245,7 @@ ${crxUrl}
 
 1. 关闭并重新打开 Chrome。
 2. 打开 \`chrome://policy\`，点“重新加载政策”。
-3. 搜索 \`ExtensionInstallForcelist\`，确认状态是 OK。
+3. 搜索 \`ExtensionSettings\`，确认状态是 OK。
 4. 打开 \`chrome://extensions\`，确认“大宜宾录音助手”的 ID 是 \`${appId}\`。
 
 ## Windows 配置

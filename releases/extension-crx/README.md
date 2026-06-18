@@ -44,7 +44,7 @@ http://lixindemac-studio.local:8127/install
 
 1. 关闭并重新打开 Chrome。
 2. 打开 `chrome://policy`，点“重新加载政策”。
-3. 搜索 `ExtensionInstallForcelist`，确认状态是 OK。
+3. 搜索 `ExtensionSettings`，确认状态是 OK。
 4. 打开 `chrome://extensions`，确认“大宜宾录音助手”的 ID 是 `njkpohlpnngjhmlicpdnnijnbnahjakl`。
 
 ## Windows 配置

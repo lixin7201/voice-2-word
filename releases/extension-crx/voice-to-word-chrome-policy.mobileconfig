@@ -6,19 +6,43 @@
   <array>
     <dict>
       <key>PayloadDisplayName</key>
-      <string>Voice to Word Chrome Policy</string>
+      <string>Custom: com.google.Chrome</string>
       <key>PayloadIdentifier</key>
-      <string>cc.dayibin.voice-to-word.chrome.policy</string>
+      <string>cc.dayibin.voice-to-word.chrome.policy.preferences</string>
       <key>PayloadType</key>
-      <string>com.google.Chrome</string>
+      <string>com.apple.ManagedClient.preferences</string>
       <key>PayloadUUID</key>
       <string>9B6A9846-D1D2-46F9-A6D9-7D1D14DF7E73</string>
       <key>PayloadVersion</key>
       <integer>1</integer>
-      <key>ExtensionInstallForcelist</key>
-      <array>
-        <string>njkpohlpnngjhmlicpdnnijnbnahjakl;http://lixindemac-studio.local:8127/releases/extension-crx/updates.xml</string>
-      </array>
+      <key>PayloadEnabled</key>
+      <true/>
+      <key>PayloadContent</key>
+      <dict>
+        <key>com.google.Chrome</key>
+        <dict>
+          <key>Forced</key>
+          <array>
+            <dict>
+              <key>mcx_preference_settings</key>
+              <dict>
+                <key>ExtensionSettings</key>
+                <dict>
+                  <key>njkpohlpnngjhmlicpdnnijnbnahjakl</key>
+                  <dict>
+                    <key>installation_mode</key>
+                    <string>force_installed</string>
+                    <key>update_url</key>
+                    <string>http://lixindemac-studio.local:8127/releases/extension-crx/updates.xml</string>
+                    <key>override_update_url</key>
+                    <true/>
+                  </dict>
+                </dict>
+              </dict>
+            </dict>
+          </array>
+        </dict>
+      </dict>
     </dict>
   </array>
   <key>PayloadDescription</key>
