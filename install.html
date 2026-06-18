@@ -110,26 +110,46 @@
 <body>
   <main>
     <h1>安装大宜宾录音助手</h1>
-    <p class="lead">不需要谷歌商店，也不需要 VPN。下载启动器后，每次打开都会自动更新录音助手插件。</p>
+    <p class="lead">不需要谷歌商店，也不需要 VPN。下载最新版插件压缩包，解压后在 Chrome 里加载即可。</p>
 
     <div class="choices single">
-      <a class="choice primary" href="/releases/launcher/voice-to-word-browser-launcher-0.1.2.zip">
-        <strong>下载录音助手浏览器启动器</strong>
-        <span>下载后解压。Mac 用 Chrome 就双击 open-voice-to-word-chrome.command；用 Atlas 就双击 open-voice-to-word-atlas.command。</span>
+      <a id="downloadLink" class="choice primary" href="/releases/extension/voice-to-word-extension-0.1.2.zip">
+        <strong>下载最新版插件压缩包</strong>
+        <span id="downloadMeta">当前版本 0.1.2。下载后解压，再到 Chrome 扩展管理页加载解压后的文件夹。</span>
       </a>
     </div>
 
     <ol>
-      <li>下载 zip 后先解压。</li>
-      <li>Mac 用 Chrome：双击 <code>open-voice-to-word-chrome.command</code>。</li>
-      <li>Mac 用 ChatGPT Atlas：双击 <code>open-voice-to-word-atlas.command</code>。</li>
-      <li>Windows 用 Chrome：双击 <code>open-voice-to-word-chrome-windows.cmd</code>。</li>
-      <li>启动器会自动更新插件并打开专用浏览器窗口。</li>
+      <li>下载 zip 后先解压到一个固定文件夹。</li>
+      <li>打开 Chrome 的 <code>chrome://extensions</code>。</li>
+      <li>打开右上角“开发者模式”。</li>
+      <li>点“加载已解压的扩展程序”，选择刚才解压出来的文件夹。</li>
+      <li>以后有新版时，点插件里的更新提示下载新版 zip，解压后覆盖旧文件夹，再在扩展管理页点“重新加载”。</li>
     </ol>
 
     <div class="note">
-      这种方式不会把插件塞进你平时那个浏览器窗口；请从这个启动器进入录音网页。Atlas 如果不支持加载插件，请改用 Chrome 启动器。
+      浏览器不能自动把 zip 下载到旧插件目录，也不能自动解压覆盖。这一步需要人工解压覆盖，或者重新选择新文件夹加载。
     </div>
   </main>
+  <script>
+    async function hydrateLatestDownload() {
+      const link = document.getElementById('downloadLink');
+      const meta = document.getElementById('downloadMeta');
+      try {
+        const response = await fetch('/api/extension/latest', { cache: 'no-store' });
+        if (!response.ok) return;
+        const payload = await response.json();
+        const latest = payload.latestExtension || {};
+        if (latest.downloadUrl) link.href = latest.downloadUrl;
+        if (latest.version) {
+          meta.textContent = `当前版本 ${latest.version}。下载后解压，再到 Chrome 扩展管理页加载解压后的文件夹。`;
+        }
+      } catch {
+        // Keep the packaged fallback link visible.
+      }
+    }
+
+    hydrateLatestDownload();
+  </script>
 </body>
 </html>

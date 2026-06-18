@@ -187,11 +187,6 @@ async function routeRequest(req, res, store, config) {
     return;
   }
 
-  if (['GET', 'HEAD'].includes(req.method) && pathname.startsWith('/releases/launcher/')) {
-    serveReleaseFile(pathname, '/releases/launcher/', path.join(process.cwd(), 'releases', 'launcher'), req.method, res);
-    return;
-  }
-
   const avatarMatch = pathname.match(/^\/uploads\/avatars\/([^/]+)$/);
   if (avatarMatch && req.method === 'GET') {
     serveLocalAvatar(avatarMatch[1], config, res);

@@ -108,10 +108,9 @@ GET /api/extension/latest
 - 当前办公室使用的是“加载已解压的扩展程序”，Chrome 不允许这种扩展静默覆盖安装目录。
 - 已安装 `0.1.1` 及以后版本的同事，可以在局域网内看到后续版本提示并下载新版包。
 - 仍停留在 `0.1.0` 或更旧版本的同事，旧插件本身没有更新检查代码，需要手动安装一次新版包。
-- “加载已解压的扩展程序”永远只是手动更新模式。即使删除 `0.1.1` 后重新加载 `0.1.2` 文件夹，后续也不会变成静默自动更新。
-- 真正自动更新必须迁移到 CRX 策略安装模式：固定 CRX 私钥、生成 `.crx` 和 `updates.xml`，再用 Chrome 企业策略安装。
+- “加载已解压的扩展程序”永远只是手动更新模式。局域网更新只能提示并下载新版 zip，不能自动写入旧插件目录、自动解压或自动覆盖。
 
-### CRX 自动更新模式
+### 办公室安装方式
 
 给同事安装时，优先只发这个入口：
 
@@ -119,62 +118,21 @@ GET /api/extension/latest
 http://lixindemac-studio.local:8127/install
 ```
 
-页面会提供一个自动更新安装包。用户下载 zip、解压，然后按电脑系统双击：
+页面会提供最新版插件压缩包。用户下载 zip、解压，然后在 Chrome 里：
 
-- Mac：`install-mac.command`
-- Windows：`install-windows.cmd`
+1. 打开 `chrome://extensions`。
+2. 打开“开发者模式”。
+3. 点“加载已解压的扩展程序”。
+4. 选择解压后的插件文件夹。
 
-安装器内部会把 Chrome 指向办公室内网 CRX 更新源。用户以后不需要再重复安装。
+后续有新版时：
 
-当前已准备好 `0.1.2` 的 CRX 自动更新包：
+1. 插件内会提示发现新版。
+2. 点更新下载新版 zip。
+3. 解压后覆盖旧插件文件夹，或重新选择新文件夹加载。
+4. 在 `chrome://extensions` 点“重新加载”。
 
-```text
-releases/extension-crx/
-  README.md
-  updates.xml
-  voice-to-word-extension-0.1.2.crx
-  voice-to-word-auto-installer-0.1.2.zip
-  INSTALL.txt
-  install-mac.command
-  install-windows.cmd
-  voice-to-word-chrome-policy.mobileconfig
-  com.google.Chrome.plist
-  install-windows-force-policy.reg
-  metadata.json
-```
-
-固定扩展 ID：
-
-```text
-njkpohlpnngjhmlicpdnnijnbnahjakl
-```
-
-更新地址：
-
-```text
-http://lixindemac-studio.local:8127/releases/extension-crx/updates.xml
-```
-
-迁移规则：
-
-1. 旧的 `0.1.1` 如果是“加载已解压的扩展程序”安装的，需要从 `chrome://extensions` 移除。
-2. 新版不能再用“加载已解压的扩展程序”安装；请使用自动更新安装包。
-3. Mac 双击 `install-mac.command`，Windows 双击 `install-windows.cmd`。
-4. 安装后打开 `chrome://extensions`，确认扩展 ID 是 `njkpohlpnngjhmlicpdnnijnbnahjakl`。
-
-后续发布新版本时：
-
-```bash
-EXTENSION_KEY_PATH=/Users/lixin/.voice-to-word/extension-update-key.pem PUBLIC_BASE_URL=http://lixindemac-studio.local:8127 npm run package:extension-crx
-```
-
-必须一直使用同一把私钥：
-
-```text
-/Users/lixin/.voice-to-word/extension-update-key.pem
-```
-
-这把私钥不要发给员工，不要提交到 Git。丢失后扩展 ID 会变，旧 CRX 版就不能原地自动更新。
+说明：CRX、企业策略、浏览器启动器方案在普通办公室电脑上会触发安全提示或策略限制，当前不作为同事安装主线。
 
 ## 安全要求
 
