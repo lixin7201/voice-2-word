@@ -45,6 +45,9 @@
       gap: 14px;
       margin-bottom: 24px;
     }
+    .choices.single {
+      grid-template-columns: 1fr;
+    }
     .choice {
       display: block;
       min-height: 136px;
@@ -68,6 +71,10 @@
     .choice:hover {
       border-color: #2e7bbd;
       background: #eef7ff;
+    }
+    .choice.primary {
+      background: #eef7ff;
+      border-color: #2e7bbd;
     }
     ol {
       margin: 0;
@@ -103,27 +110,25 @@
 <body>
   <main>
     <h1>安装大宜宾录音助手</h1>
-    <p class="lead">第一次安装后，以后插件会自动更新。请选择你的电脑系统，下载后按提示安装。</p>
+    <p class="lead">第一次安装后，以后插件会自动更新。下载一个安装包，解压后按电脑系统双击对应文件。</p>
 
-    <div class="choices">
-      <a class="choice" href="/releases/extension-crx/voice-to-word-chrome-policy.mobileconfig">
-        <strong>我是 Mac 电脑</strong>
-        <span>下载配置文件，打开后到系统设置里点安装。</span>
-      </a>
-      <a class="choice" href="/releases/extension-crx/install-windows-force-policy.reg">
-        <strong>我是 Windows 电脑</strong>
-        <span>下载注册表文件，用管理员权限打开，提示都点是。</span>
+    <div class="choices single">
+      <a class="choice primary" href="/releases/extension-crx/voice-to-word-auto-installer-0.1.2.zip">
+        <strong>下载自动更新安装包</strong>
+        <span>下载后解压。Mac 双击 install-mac.command，Windows 双击 install-windows.cmd。</span>
       </a>
     </div>
 
     <ol>
-      <li>安装前先关闭 Chrome，或安装完成后完全退出 Chrome 再重新打开。</li>
+      <li>下载 zip 后先解压。</li>
+      <li>Mac 电脑双击 <code>install-mac.command</code>，Windows 电脑双击 <code>install-windows.cmd</code>。</li>
+      <li>按提示输入电脑密码或点管理员确认。</li>
+      <li>安装器会自动重启 Chrome。看到“大宜宾录音助手”后就可以登录使用。</li>
       <li>如果之前装过旧版录音助手，在 <code>chrome://extensions</code> 删除旧版。</li>
-      <li>重新打开 Chrome 后，看到“大宜宾录音助手”就可以登录使用。</li>
     </ol>
 
     <div class="note">
-      如果电脑提示需要管理员密码，请联系管理员帮忙点一次。以后新版会自动更新，不需要重复安装。
+      这不是谷歌商店安装，也不需要外网。安装器只是把 Chrome 指向办公室内网更新源，以后新版会自动更新。
     </div>
   </main>
 </body>

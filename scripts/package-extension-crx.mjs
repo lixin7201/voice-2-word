@@ -34,6 +34,8 @@ const appId = process.env.EXTENSION_ID || extensionIdFromPrivateKey(fs.readFileS
 const updateUrl = `${publicBaseUrl.replace(/\/$/, '')}/releases/extension-crx/updates.xml`;
 const crxFileName = `voice-to-word-extension-${version}.crx`;
 const crxUrl = `${publicBaseUrl.replace(/\/$/, '')}/releases/extension-crx/${crxFileName}`;
+const installerZipFileName = `voice-to-word-auto-installer-${version}.zip`;
+const installerZipUrl = `${publicBaseUrl.replace(/\/$/, '')}/releases/extension-crx/${installerZipFileName}`;
 const outputPath = path.join(releaseDir, crxFileName);
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-extension-crx-'));
 
@@ -75,25 +77,54 @@ try {
   writeReleaseFile('install-windows-force-policy.reg', windowsPolicyRegistry({ appId, updateUrl }));
   writeReleaseFile('com.google.Chrome.plist', macChromePlist({ appId, updateUrl }));
   writeReleaseFile('voice-to-word-chrome-policy.mobileconfig', macChromeMobileconfig({ appId, updateUrl }));
+  writeReleaseFile('install-mac.command', macInstallerCommand({ appId, updateUrl }), 0o755);
+  writeReleaseFile('install-windows.cmd', windowsInstallerCommand({ appId, updateUrl }));
+  writeReleaseFile('INSTALL.txt', installerReadme({ appId, updateUrl }));
+  writeInstallerZip(installerZipFileName, [
+    'INSTALL.txt',
+    'install-mac.command',
+    'install-windows.cmd',
+  ]);
   writeReleaseFile('metadata.json', `${JSON.stringify({
     name: manifest.name || '大宜宾录音助手',
     version,
     appId,
     updateUrl,
     crxUrl,
+    installerZipUrl,
     generatedAt: new Date().toISOString(),
   }, null, 2)}\n`);
-  writeReleaseFile('README.md', releaseReadme({ version, appId, updateUrl, crxUrl }));
+  writeReleaseFile('README.md', releaseReadme({ version, appId, updateUrl, crxUrl, installerZipUrl }));
   console.log(`已生成 ${outputPath}`);
+  console.log(`已生成 ${path.join(releaseDir, installerZipFileName)}`);
   console.log(`扩展 ID：${appId}`);
 } finally {
   fs.rmSync(tempDir, { recursive: true, force: true });
 }
 
-function writeReleaseFile(fileName, content) {
+function writeReleaseFile(fileName, content, mode = 0o644) {
   const filePath = path.join(releaseDir, fileName);
   fs.writeFileSync(filePath, content);
-  fs.chmodSync(filePath, 0o644);
+  fs.chmodSync(filePath, mode);
+}
+
+function writeInstallerZip(fileName, packageFiles) {
+  const output = path.join(releaseDir, fileName);
+  const tempInstallerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-extension-installer-'));
+  try {
+    for (const relativePath of packageFiles) {
+      fs.copyFileSync(path.join(releaseDir, relativePath), path.join(tempInstallerDir, relativePath));
+    }
+    fs.rmSync(output, { force: true });
+    const result = childProcess.spawnSync('zip', ['-q', '-r', output, ...packageFiles], {
+      cwd: tempInstallerDir,
+      stdio: 'inherit',
+    });
+    if (result.status !== 0) throw new Error('安装包 zip 打包失败，请确认系统已安装 zip 命令');
+    fs.chmodSync(output, 0o644);
+  } finally {
+    fs.rmSync(tempInstallerDir, { recursive: true, force: true });
+  }
 }
 
 function extensionIdFromPrivateKey(privateKeyPem) {
@@ -110,6 +141,105 @@ function windowsPolicyRegistry({ appId, updateUrl }) {
 
 [HKEY_LOCAL_MACHINE\\SOFTWARE\\Policies\\Google\\Chrome\\ExtensionInstallForcelist]
 "1"="${appId};${updateUrl}"
+`;
+}
+
+function macInstallerCommand({ appId, updateUrl }) {
+  return `#!/bin/bash
+set -euo pipefail
+
+APP_ID="${appId}"
+UPDATE_URL="${updateUrl}"
+PLIST="/Library/Preferences/com.google.Chrome.plist"
+TMP_PLIST="$(mktemp /tmp/dayibin-chrome-policy.XXXXXX.plist)"
+
+cleanup() {
+  rm -f "$TMP_PLIST"
+}
+trap cleanup EXIT
+
+echo "大宜宾录音助手自动更新版安装器"
+echo
+echo "接下来会写入 Chrome 插件安装策略，需要输入一次电脑密码。"
+echo "安装完成后会自动重启 Chrome。"
+echo
+
+if [ -f "$PLIST" ]; then
+  cp "$PLIST" "$TMP_PLIST" 2>/dev/null || true
+else
+  cat > "$TMP_PLIST" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict/>
+</plist>
+PLIST
+fi
+
+/usr/libexec/PlistBuddy -c "Add :ExtensionSettings dict" "$TMP_PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Delete :ExtensionSettings:$APP_ID" "$TMP_PLIST" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Add :ExtensionSettings:$APP_ID dict" "$TMP_PLIST"
+/usr/libexec/PlistBuddy -c "Add :ExtensionSettings:$APP_ID:installation_mode string force_installed" "$TMP_PLIST"
+/usr/libexec/PlistBuddy -c "Add :ExtensionSettings:$APP_ID:update_url string $UPDATE_URL" "$TMP_PLIST"
+/usr/libexec/PlistBuddy -c "Add :ExtensionSettings:$APP_ID:override_update_url bool true" "$TMP_PLIST"
+/usr/bin/plutil -convert xml1 "$TMP_PLIST"
+
+sudo /bin/mkdir -p /Library/Preferences
+sudo /bin/cp "$TMP_PLIST" "$PLIST"
+sudo /usr/sbin/chown root:wheel "$PLIST"
+sudo /bin/chmod 644 "$PLIST"
+
+echo
+echo "Chrome 策略已写入，正在重启 Chrome..."
+/usr/bin/osascript -e 'tell application "Google Chrome" to quit' >/dev/null 2>&1 || true
+/bin/sleep 2
+/usr/bin/open -a "Google Chrome" "chrome://extensions" >/dev/null 2>&1 || true
+
+echo
+echo "安装完成。Chrome 打开后，请等待 10-30 秒，列表里会出现“大宜宾录音助手”。"
+echo "如果之前手动加载过旧版，请在 chrome://extensions 里移除旧版。"
+echo
+read -r -p "按回车关闭这个窗口..."
+`;
+}
+
+function windowsInstallerCommand({ appId, updateUrl }) {
+  return `@echo off
+setlocal
+
+set "APP_ID=${appId}"
+set "UPDATE_URL=${updateUrl}"
+set "POLICY_KEY=HKLM\\SOFTWARE\\Policies\\Google\\Chrome\\ExtensionInstallForcelist"
+set "POLICY_VALUE=9901"
+
+net session >nul 2>&1
+if not "%errorlevel%"=="0" (
+  echo 正在请求管理员权限，请在弹窗里点“是”。
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+  exit /b
+)
+
+echo 大宜宾录音助手自动更新版安装器
+echo.
+echo 正在写入 Chrome 插件安装策略...
+reg add "%POLICY_KEY%" /v "%POLICY_VALUE%" /t REG_SZ /d "%APP_ID%;%UPDATE_URL%" /f
+if not "%errorlevel%"=="0" (
+  echo 安装失败：无法写入 Chrome 策略。
+  pause
+  exit /b 1
+)
+
+echo.
+echo 正在重启 Chrome...
+taskkill /IM chrome.exe /F >nul 2>&1
+timeout /t 2 /nobreak >nul
+start "" "chrome.exe" "chrome://extensions"
+
+echo.
+echo 安装完成。Chrome 打开后，请等待 10-30 秒，列表里会出现“大宜宾录音助手”。
+echo 如果之前手动加载过旧版，请在 chrome://extensions 里移除旧版。
+echo.
+pause
 `;
 }
 
@@ -198,7 +328,34 @@ function macChromeMobileconfig({ appId, updateUrl }) {
 `;
 }
 
-function releaseReadme({ version, appId, updateUrl, crxUrl }) {
+function installerReadme({ appId, updateUrl }) {
+  return `大宜宾录音助手自动更新版安装包
+
+这个安装包只需要安装一次。后续新版会通过办公室内网自动更新。
+
+Mac 电脑：
+1. 解压 zip。
+2. 双击 install-mac.command。
+3. 按提示输入电脑密码。
+4. Chrome 自动重启后，等待 10-30 秒。
+
+Windows 电脑：
+1. 解压 zip。
+2. 双击 install-windows.cmd。
+3. 如果弹出管理员确认，点“是”。
+4. Chrome 自动重启后，等待 10-30 秒。
+
+如果之前手动加载过旧版，请在 chrome://extensions 里移除旧版。
+
+扩展 ID：
+${appId}
+
+更新地址：
+${updateUrl}
+`;
+}
+
+function releaseReadme({ version, appId, updateUrl, crxUrl, installerZipUrl }) {
   return `# 大宜宾录音助手 CRX 自动更新包
 
 当前版本：${version}
@@ -227,7 +384,18 @@ ${crxUrl}
 http://lixindemac-studio.local:8127/install
 \`\`\`
 
-页面会自动提供 Mac 和 Windows 两个安装按钮。
+页面会提供一个自动更新安装包。用户下载 zip、解压，然后按电脑系统双击：
+
+- Mac：\`install-mac.command\`
+- Windows：\`install-windows.cmd\`
+
+安装器内部会把 Chrome 指向办公室内网 CRX 更新源。用户以后不需要再重复安装。
+
+也可以直接下载自动更新安装包：
+
+\`\`\`text
+${installerZipUrl}
+\`\`\`
 
 ## 适用结论
 
@@ -237,9 +405,9 @@ http://lixindemac-studio.local:8127/install
 
 ## Mac 配置
 
-推荐把 \`voice-to-word-chrome-policy.mobileconfig\` 通过 MDM 下发。没有 MDM 时，可以先在测试机手动安装这个配置描述文件。
+优先使用 \`install-mac.command\`。它会写入 \`/Library/Preferences/com.google.Chrome.plist\`，并重启 Chrome。
 
-也可以把 \`com.google.Chrome.plist\` 作为 Chrome 的托管偏好配置，下发到 \`com.google.Chrome\` 域。
+\`voice-to-word-chrome-policy.mobileconfig\` 和 \`com.google.Chrome.plist\` 是备用的企业管理材料，不建议普通员工手动操作。
 
 验证：
 
@@ -250,13 +418,15 @@ http://lixindemac-studio.local:8127/install
 
 ## Windows 配置
 
-推荐通过域控组策略、Intune 或其他设备管理工具设置 Chrome 策略：
+优先使用 \`install-windows.cmd\`。它会写入本机 Chrome 策略，并重启 Chrome。
+
+如需通过域控组策略、Intune 或其他设备管理工具统一下发，策略值为：
 
 \`\`\`text
 ExtensionInstallForcelist = ${appId};${updateUrl}
 \`\`\`
 
-\`install-windows-force-policy.reg\` 只适合在测试机上用管理员权限导入验证。正式推广时不要让普通员工手动改注册表。
+\`install-windows-force-policy.reg\` 是备用材料。正式推广时不要让普通员工手动改注册表。
 
 验证：
 

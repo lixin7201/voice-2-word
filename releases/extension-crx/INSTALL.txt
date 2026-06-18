@@ -1,0 +1,23 @@
+大宜宾录音助手自动更新版安装包
+
+这个安装包只需要安装一次。后续新版会通过办公室内网自动更新。
+
+Mac 电脑：
+1. 解压 zip。
+2. 双击 install-mac.command。
+3. 按提示输入电脑密码。
+4. Chrome 自动重启后，等待 10-30 秒。
+
+Windows 电脑：
+1. 解压 zip。
+2. 双击 install-windows.cmd。
+3. 如果弹出管理员确认，点“是”。
+4. Chrome 自动重启后，等待 10-30 秒。
+
+如果之前手动加载过旧版，请在 chrome://extensions 里移除旧版。
+
+扩展 ID：
+njkpohlpnngjhmlicpdnnijnbnahjakl
+
+更新地址：
+http://lixindemac-studio.local:8127/releases/extension-crx/updates.xml

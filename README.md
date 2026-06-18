@@ -119,7 +119,12 @@ GET /api/extension/latest
 http://lixindemac-studio.local:8127/install
 ```
 
-页面会自动提供 Mac 和 Windows 两个安装按钮。
+页面会提供一个自动更新安装包。用户下载 zip、解压，然后按电脑系统双击：
+
+- Mac：`install-mac.command`
+- Windows：`install-windows.cmd`
+
+安装器内部会把 Chrome 指向办公室内网 CRX 更新源。用户以后不需要再重复安装。
 
 当前已准备好 `0.1.2` 的 CRX 自动更新包：
 
@@ -128,6 +133,10 @@ releases/extension-crx/
   README.md
   updates.xml
   voice-to-word-extension-0.1.2.crx
+  voice-to-word-auto-installer-0.1.2.zip
+  INSTALL.txt
+  install-mac.command
+  install-windows.cmd
   voice-to-word-chrome-policy.mobileconfig
   com.google.Chrome.plist
   install-windows-force-policy.reg
@@ -149,10 +158,9 @@ http://lixindemac-studio.local:8127/releases/extension-crx/updates.xml
 迁移规则：
 
 1. 旧的 `0.1.1` 如果是“加载已解压的扩展程序”安装的，需要从 `chrome://extensions` 移除。
-2. 新版不能再用“加载已解压的扩展程序”安装；必须通过 Chrome 策略安装 CRX 版。
-3. Mac 使用 `voice-to-word-chrome-policy.mobileconfig` 或 `com.google.Chrome.plist` 下发策略。
-4. Windows 使用组策略、Intune、域控或管理员注册表策略下发 `ExtensionInstallForcelist`。
-5. 安装后打开 `chrome://policy`，确认 `ExtensionInstallForcelist` 状态是 OK；再打开 `chrome://extensions`，确认扩展 ID 是 `njkpohlpnngjhmlicpdnnijnbnahjakl`。
+2. 新版不能再用“加载已解压的扩展程序”安装；请使用自动更新安装包。
+3. Mac 双击 `install-mac.command`，Windows 双击 `install-windows.cmd`。
+4. 安装后打开 `chrome://extensions`，确认扩展 ID 是 `njkpohlpnngjhmlicpdnnijnbnahjakl`。
 
 后续发布新版本时：
 

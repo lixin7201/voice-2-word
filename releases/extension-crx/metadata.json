@@ -4,5 +4,6 @@
   "appId": "njkpohlpnngjhmlicpdnnijnbnahjakl",
   "updateUrl": "http://lixindemac-studio.local:8127/releases/extension-crx/updates.xml",
   "crxUrl": "http://lixindemac-studio.local:8127/releases/extension-crx/voice-to-word-extension-0.1.2.crx",
-  "generatedAt": "2026-06-18T07:50:59.231Z"
+  "installerZipUrl": "http://lixindemac-studio.local:8127/releases/extension-crx/voice-to-word-auto-installer-0.1.2.zip",
+  "generatedAt": "2026-06-18T07:58:20.629Z"
 }

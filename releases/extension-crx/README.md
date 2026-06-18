@@ -26,7 +26,18 @@ http://lixindemac-studio.local:8127/releases/extension-crx/voice-to-word-extensi
 http://lixindemac-studio.local:8127/install
 ```
 
-页面会自动提供 Mac 和 Windows 两个安装按钮。
+页面会提供一个自动更新安装包。用户下载 zip、解压，然后按电脑系统双击：
+
+- Mac：`install-mac.command`
+- Windows：`install-windows.cmd`
+
+安装器内部会把 Chrome 指向办公室内网 CRX 更新源。用户以后不需要再重复安装。
+
+也可以直接下载自动更新安装包：
+
+```text
+http://lixindemac-studio.local:8127/releases/extension-crx/voice-to-word-auto-installer-0.1.2.zip
+```
 
 ## 适用结论
 
@@ -36,9 +47,9 @@ http://lixindemac-studio.local:8127/install
 
 ## Mac 配置
 
-推荐把 `voice-to-word-chrome-policy.mobileconfig` 通过 MDM 下发。没有 MDM 时，可以先在测试机手动安装这个配置描述文件。
+优先使用 `install-mac.command`。它会写入 `/Library/Preferences/com.google.Chrome.plist`，并重启 Chrome。
 
-也可以把 `com.google.Chrome.plist` 作为 Chrome 的托管偏好配置，下发到 `com.google.Chrome` 域。
+`voice-to-word-chrome-policy.mobileconfig` 和 `com.google.Chrome.plist` 是备用的企业管理材料，不建议普通员工手动操作。
 
 验证：
 
@@ -49,13 +60,15 @@ http://lixindemac-studio.local:8127/install
 
 ## Windows 配置
 
-推荐通过域控组策略、Intune 或其他设备管理工具设置 Chrome 策略：
+优先使用 `install-windows.cmd`。它会写入本机 Chrome 策略，并重启 Chrome。
+
+如需通过域控组策略、Intune 或其他设备管理工具统一下发，策略值为：
 
 ```text
 ExtensionInstallForcelist = njkpohlpnngjhmlicpdnnijnbnahjakl;http://lixindemac-studio.local:8127/releases/extension-crx/updates.xml
 ```
 
-`install-windows-force-policy.reg` 只适合在测试机上用管理员权限导入验证。正式推广时不要让普通员工手动改注册表。
+`install-windows-force-policy.reg` 是备用材料。正式推广时不要让普通员工手动改注册表。
 
 验证：
 

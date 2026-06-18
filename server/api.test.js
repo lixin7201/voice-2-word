@@ -571,8 +571,13 @@ test('web root serves login workbench without weakening API auth', async () => {
     assert.match(installPage.headers.get('content-type') || '', /text\/html/);
     const installHtml = await installPage.text();
     assert.match(installHtml, /安装大宜宾录音助手/);
-    assert.match(installHtml, /voice-to-word-chrome-policy\.mobileconfig/);
-    assert.match(installHtml, /install-windows-force-policy\.reg/);
+    assert.match(installHtml, /voice-to-word-auto-installer-0\.1\.2\.zip/);
+    assert.match(installHtml, /install-mac\.command/);
+    assert.match(installHtml, /install-windows\.cmd/);
+
+    const autoInstaller = await fetch(`${baseUrl}/releases/extension-crx/voice-to-word-auto-installer-0.1.2.zip`, { method: 'HEAD' });
+    assert.equal(autoInstaller.status, 200);
+    assert.match(autoInstaller.headers.get('content-type') || '', /application\/zip/);
 
     const macInstaller = await fetch(`${baseUrl}/releases/extension-crx/voice-to-word-chrome-policy.mobileconfig`);
     assert.equal(macInstaller.status, 200);
