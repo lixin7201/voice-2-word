@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>PayloadContent</key>
+  <array>
+    <dict>
+      <key>PayloadDisplayName</key>
+      <string>Voice to Word Chrome Policy</string>
+      <key>PayloadIdentifier</key>
+      <string>cc.dayibin.voice-to-word.chrome.policy</string>
+      <key>PayloadType</key>
+      <string>com.google.Chrome</string>
+      <key>PayloadUUID</key>
+      <string>9B6A9846-D1D2-46F9-A6D9-7D1D14DF7E73</string>
+      <key>PayloadVersion</key>
+      <integer>1</integer>
+      <key>ExtensionInstallForcelist</key>
+      <array>
+        <string>njkpohlpnngjhmlicpdnnijnbnahjakl;http://lixindemac-studio.local:8127/releases/extension-crx/updates.xml</string>
+      </array>
+    </dict>
+  </array>
+  <key>PayloadDescription</key>
+  <string>Force install and update the Voice to Word Chrome extension.</string>
+  <key>PayloadDisplayName</key>
+  <string>Voice to Word Chrome Policy</string>
+  <key>PayloadIdentifier</key>
+  <string>cc.dayibin.voice-to-word.chrome</string>
+  <key>PayloadOrganization</key>
+  <string>Dayibin</string>
+  <key>PayloadRemovalDisallowed</key>
+  <false/>
+  <key>PayloadScope</key>
+  <string>System</string>
+  <key>PayloadType</key>
+  <string>Configuration</string>
+  <key>PayloadUUID</key>
+  <string>F98F2F96-0F19-4876-97A8-B02D72F97859</string>
+  <key>PayloadVersion</key>
+  <integer>1</integer>
+</dict>
+</plist>

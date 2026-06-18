@@ -1,0 +1,4 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist]
+"1"="njkpohlpnngjhmlicpdnnijnbnahjakl;http://lixindemac-studio.local:8127/releases/extension-crx/updates.xml"
