@@ -16,16 +16,23 @@ function r2Endpoint(config) {
   return (config.r2Endpoint || `https://${config.r2AccountId}.r2.cloudflarestorage.com`).replace(/\/$/, '');
 }
 
-async function putR2Object(config, key, buffer, contentType, fetchImpl = fetch) {
+async function putR2Object(config, key, body, contentType, fetchImpl = fetch, options = {}) {
   const url = presignR2Url(config, {
     method: 'PUT',
     key,
     expiresIn: 3600,
   });
-  const response = await fetchImpl(url, {
+  const headers = {};
+  if (contentType) headers['Content-Type'] = contentType;
+  if (Number.isFinite(options.contentLength)) headers['Content-Length'] = String(options.contentLength);
+  const requestOptions = {
     method: 'PUT',
-    headers: contentType ? { 'Content-Type': contentType } : {},
-    body: buffer,
+    headers,
+    body,
+  };
+  if (body && typeof body.pipe === 'function') requestOptions.duplex = 'half';
+  const response = await fetchImpl(url, {
+    ...requestOptions,
   });
   if (!response.ok) {
     const text = await response.text().catch(() => '');

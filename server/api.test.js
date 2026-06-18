@@ -90,6 +90,61 @@ function startDelayedLlmServer() {
   });
 }
 
+function startLlmProviderServer() {
+  const requests = [];
+  const server = require('node:http').createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const body = Buffer.concat(chunks).toString('utf8');
+    requests.push({
+      method: req.method,
+      url: req.url,
+      authorization: req.headers.authorization || '',
+      body: body ? JSON.parse(body) : {},
+    });
+    if (req.method !== 'POST' || !['/v1/responses', '/v1/chat/completions'].includes(req.url)) {
+      res.writeHead(404).end();
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (req.url === '/v1/responses') {
+      res.end(JSON.stringify({
+        output_text: JSON.stringify({
+          summaryMarkdown: '# sub2api 总结\n\n模型池命中 sub2api。',
+          overviewCard: { heroTitle: '模型池命中', cards: [] },
+          mindMap: { title: '模型池', center: 'sub2api', branches: [] },
+          structuredJson: { provider: 'sub2api' },
+          titleSuggestion: '模型池命中',
+        }),
+      }));
+      return;
+    }
+    res.end(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            summaryMarkdown: '# Kimi 总结',
+            overviewCard: { heroTitle: 'Kimi', cards: [] },
+            mindMap: { title: 'Kimi', center: 'Kimi', branches: [] },
+            structuredJson: { provider: 'kimi' },
+            titleSuggestion: 'Kimi 总结',
+          }),
+        },
+      }],
+    }));
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      resolve({
+        server,
+        baseUrl: `http://127.0.0.1:${port}/v1`,
+        requests,
+      });
+    });
+  });
+}
+
 async function request(baseUrl, pathName, options = {}) {
   const response = await fetch(`${baseUrl}${pathName}`, {
     ...options,
@@ -126,6 +181,7 @@ test('seeded users log in with expected roles and departments', async () => {
   try {
     const lixin = await login(baseUrl, '离心');
     assert.equal(lixin.employee.globalRole, 'admin');
+    assert.equal(Object.hasOwn(lixin, 'refreshToken'), false);
 
     const boss = await login(baseUrl, '练团长');
     assert.equal(boss.employee.globalRole, 'boss');
@@ -136,6 +192,60 @@ test('seeded users log in with expected roles and departments', async () => {
 
     const ermao = await login(baseUrl, '二毛');
     assert.deepEqual(ermao.employee.departments.map((item) => item.name).sort(), ['红娘部门', '运营部']);
+  } finally {
+    server.close();
+  }
+});
+
+test('server refuses insecure default JWT secrets', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-2-word-jwt-'));
+  const previousAllowInsecure = process.env.VOICE_TO_WORD_ALLOW_INSECURE_JWT;
+  delete process.env.VOICE_TO_WORD_ALLOW_INSECURE_JWT;
+  try {
+    assert.throws(() => createVoiceServer({
+      dataFile: path.join(dir, 'db.json'),
+      uploadDir: path.join(dir, 'uploads'),
+      exportDir: path.join(dir, 'exports'),
+      jwtSecret: '',
+      recoverProcessing: false,
+    }), /JWT_SECRET/);
+    assert.throws(() => createVoiceServer({
+      dataFile: path.join(dir, 'db.json'),
+      uploadDir: path.join(dir, 'uploads'),
+      exportDir: path.join(dir, 'exports'),
+      jwtSecret: 'change-me-in-local-env',
+      recoverProcessing: false,
+    }), /JWT_SECRET/);
+  } finally {
+    if (previousAllowInsecure === undefined) delete process.env.VOICE_TO_WORD_ALLOW_INSECURE_JWT;
+    else process.env.VOICE_TO_WORD_ALLOW_INSECURE_JWT = previousAllowInsecure;
+  }
+});
+
+test('CORS only allows extension and configured origins', async () => {
+  const { server, baseUrl } = await startTestServer();
+  try {
+    const extensionPreflight = await fetch(`${baseUrl}/api/me`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'chrome-extension://abc123',
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'authorization',
+      },
+    });
+    assert.equal(extensionPreflight.status, 204);
+    assert.equal(extensionPreflight.headers.get('access-control-allow-origin'), 'chrome-extension://abc123');
+
+    const blockedPreflight = await fetch(`${baseUrl}/api/me`, {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://evil.example',
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'authorization',
+      },
+    });
+    assert.equal(blockedPreflight.status, 204);
+    assert.equal(blockedPreflight.headers.get('access-control-allow-origin'), null);
   } finally {
     server.close();
   }
@@ -509,6 +619,14 @@ test('manual upload creates completed local-development record and export', asyn
     });
     assert.equal(exported.response.status, 200);
     assert.ok(exported.body.downloadUrl.includes('/api/export-files/'));
+    assert.equal(typeof exported.body.downloadToken, 'string');
+    assert.equal(exported.body.downloadUrl.includes('access_token='), false);
+    const scopedDownload = await fetch(`${exported.body.downloadUrl.replace('http://localhost:0', baseUrl)}?download_token=${encodeURIComponent(exported.body.downloadToken)}`);
+    assert.equal(scopedDownload.status, 200);
+    const badScopedDownload = await fetch(`${exported.body.downloadUrl.replace('http://localhost:0', baseUrl)}?download_token=bad-token`);
+    assert.equal(badScopedDownload.status, 401);
+    const queryTokenMe = await fetch(`${baseUrl}/api/me?access_token=${encodeURIComponent(lanlan.accessToken)}`);
+    assert.equal(queryTokenMe.status, 401);
 
     for (const format of ['txt', 'docx', 'pdf']) {
       const result = await request(baseUrl, `/api/records/${recordId}/export`, {
@@ -519,6 +637,25 @@ test('manual upload creates completed local-development record and export', asyn
       assert.equal(result.response.status, 200);
       assert.equal(result.body.export.format, format);
     }
+  } finally {
+    server.close();
+  }
+});
+
+test('avatar upload rejects files over the 2MB limit', async () => {
+  const { server, baseUrl } = await startTestServer();
+  try {
+    const lixin = await login(baseUrl, '离心');
+    const form = new FormData();
+    form.append('avatar', new Blob([Buffer.alloc(2 * 1024 * 1024 + 1)], { type: 'image/png' }), 'avatar.png');
+    const response = await fetch(`${baseUrl}/api/me/avatar`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: form,
+    });
+    const body = await response.json();
+    assert.equal(response.status, 413);
+    assert.match(body.error, /上传文件超过限制|头像不能超过/);
   } finally {
     server.close();
   }
@@ -577,6 +714,10 @@ test('meeting minutes can skip follow-up and export omits follow-up section', as
     });
     assert.equal(audioRange.status, 206);
     assert.match(audioRange.headers.get('content-range') || '', /^bytes 0-3\//);
+    const audioQueryToken = await fetch(`${baseUrl}/api/records/${recordId}/audio?access_token=${encodeURIComponent(lixin.accessToken)}`, {
+      headers: { Range: 'bytes=0-3' },
+    });
+    assert.equal(audioQueryToken.status, 206);
 
     const exported = await request(baseUrl, `/api/records/${recordId}/export`, {
       method: 'POST',
@@ -1262,6 +1403,14 @@ test('admin settings centrally configure backend secrets without exposing them',
     });
     assert.equal(forbidden.response.status, 403);
 
+    const initialSettings = await request(baseUrl, '/api/admin/settings', {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    const timeoutField = initialSettings.body.groups
+      .flatMap((group) => group.fields)
+      .find((field) => field.key === 'dashscopeTimeoutMs');
+    assert.equal(timeoutField.value, String(13 * 60 * 60 * 1000));
+
     const preflight = await fetch(`${baseUrl}/api/admin/settings`, {
       method: 'OPTIONS',
       headers: {
@@ -1355,5 +1504,150 @@ test('admin settings centrally configure backend secrets without exposing them',
     assert.equal(JSON.stringify(settingsAuditLogs).includes('dashscope-secret-key'), false);
   } finally {
     server.close();
+  }
+});
+
+test('admin llm provider pool protects secrets and drives summarize priority', async () => {
+  const llm = await startLlmProviderServer();
+  const now = new Date().toISOString();
+  const data = createInitialData(now);
+  const owner = data.employees.find((employee) => employee.display_name === '离心');
+  const membership = data.employee_departments.find((item) => item.employee_id === owner.id);
+  data.audio_records.push({
+    id: 'rec-llm-provider-pool',
+    owner_employee_id: owner.id,
+    owner_department_id: membership.department_id,
+    title: '模型池总结测试',
+    title_source: 'manual',
+    title_locked: true,
+    ai_title: '',
+    title_updated_at: now,
+    source_type: 'manual_upload',
+    source_page_url: '',
+    source_page_title: '',
+    source_media_url_hash: '',
+    original_file_name: 'llm-provider.mp3',
+    mime_type: 'audio/mpeg',
+    file_size: 10,
+    duration_seconds: 1,
+    r2_key: 'llm-provider.mp3',
+    status: 'completed',
+    template_type: 'meeting_minutes',
+    followup_type: 'none',
+    processing_started_at: now,
+    transcribe_started_at: now,
+    summarize_started_at: now,
+    last_progress_at: now,
+    asr_task_id: '',
+    processing_attempts: 1,
+    completed_at: now,
+    error_message: '',
+    created_at: now,
+    updated_at: now,
+  });
+  data.transcripts.push({
+    id: 'transcript-llm-provider-pool',
+    audio_record_id: 'rec-llm-provider-pool',
+    asr_provider: 'local-dev',
+    asr_task_id: '',
+    raw_text: '团队要求总结优先命中新配置的 sub2api 模型。',
+    corrected_text: '团队要求总结优先命中新配置的 sub2api 模型。',
+    segments_json: [{ id: 'seg-1', startMs: 0, endMs: 1000, text: '命中 sub2api' }],
+    speaker_aliases_json: {},
+    duration_ms: 1000,
+    cost_cny: 0,
+    created_at: now,
+    updated_at: now,
+  });
+
+  const { server, baseUrl } = await startTestServer({ initialData: data, recoverProcessing: false });
+  try {
+    const lixin = await login(baseUrl, '离心');
+    const lanlan = await login(baseUrl, '岚岚');
+
+    const forbidden = await request(baseUrl, '/api/admin/llm-providers', {
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+    });
+    assert.equal(forbidden.response.status, 403);
+
+    const initial = await request(baseUrl, '/api/admin/llm-providers', {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    assert.equal(initial.response.status, 200);
+    assert.ok(initial.body.providers.some((provider) => provider.id === 'llm_sub2api_gpt55'));
+    assert.equal(JSON.stringify(initial.body).includes('api_key'), false);
+
+    const tested = await request(baseUrl, '/api/admin/llm-providers/test', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({
+        displayName: 'AI 大宜宾 sub2api - GPT-5.5',
+        providerKey: 'sub2api',
+        channelId: 'sub2api',
+        protocol: 'openai-responses',
+        baseUrl: llm.baseUrl,
+        endpointPath: '/responses',
+        apiKey: 'sub2api-secret-key',
+        requestModel: 'gpt-5.5',
+        reasoningEffort: 'high',
+      }),
+    });
+    assert.equal(tested.body.ok, true);
+    assert.equal(llm.requests.at(-1).url, '/v1/responses');
+    assert.equal(llm.requests.at(-1).authorization, 'Bearer sub2api-secret-key');
+
+    const created = await request(baseUrl, '/api/admin/llm-providers', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({
+        displayName: 'AI 大宜宾 sub2api - GPT-5.5',
+        providerKey: 'sub2api',
+        channelId: 'sub2api',
+        protocol: 'openai-responses',
+        baseUrl: llm.baseUrl,
+        endpointPath: '/responses',
+        apiKey: 'sub2api-secret-key',
+        requestModel: 'gpt-5.5',
+        priority: 1,
+        enabled: true,
+        allowFallback: true,
+        forceSaveWithoutTest: true,
+      }),
+    });
+    assert.equal(created.response.status, 201);
+    assert.equal(created.body.provider.configured, true);
+    assert.equal(JSON.stringify(created.body).includes('sub2api-secret-key'), false);
+
+    const health = await request(baseUrl, '/health');
+    assert.equal(health.body.llmConfigured, true);
+
+    const start = await request(baseUrl, '/api/records/rec-llm-provider-pool/summarize', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ templateType: 'meeting_minutes', followupType: 'none' }),
+    });
+    assert.equal(start.response.status, 200);
+    await waitFor(async () => {
+      const detail = await request(baseUrl, '/api/records/rec-llm-provider-pool', {
+        headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      });
+      return detail.body.record.status === 'completed' &&
+        detail.body.record.summary?.model_provider === 'sub2api';
+    });
+    const completed = await request(baseUrl, '/api/records/rec-llm-provider-pool', {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    assert.equal(completed.body.record.summary.model_provider, 'sub2api');
+    assert.equal(completed.body.record.summary.model_name, 'gpt-5.5');
+    assert.match(completed.body.record.summary.summary_markdown, /sub2api 总结/);
+
+    const providersAfterCall = await request(baseUrl, '/api/admin/llm-providers', {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    const sub2api = providersAfterCall.body.providers.find((provider) => provider.id === created.body.provider.id);
+    assert.equal(sub2api.lastCallStatus, 'success');
+  } finally {
+    server.close();
+    llm.server.close();
   }
 });

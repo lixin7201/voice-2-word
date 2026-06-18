@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { createInitialData } = require('./seed');
+const { defaultLlmProviderRows } = require('./llm-providers');
 
 class JsonStore {
   constructor(filePath) {
@@ -93,6 +94,7 @@ function migrateData(data) {
   ensureTable('record_notes');
   ensureTable('record_processing_events');
   ensureTable('export_files');
+  const llmProviders = ensureTable('llm_providers');
   ensureTable('system_settings');
   ensureTable('audit_logs');
   ensureTable('ztools_daily_digest_queue');
@@ -115,6 +117,13 @@ function migrateData(data) {
     changed = assignDefault(meta, 'settings_version', 1) || changed;
     changed = assignDefault(meta, 'settings_updated_at', '') || changed;
     changed = assignDefault(meta, 'settings_updated_by', null) || changed;
+  }
+
+  const providerIds = new Set(llmProviders.map((provider) => provider.id));
+  for (const provider of defaultLlmProviderRows()) {
+    if (providerIds.has(provider.id)) continue;
+    llmProviders.push(provider);
+    changed = true;
   }
 
   for (const employee of employees) {

@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const { hashPassword } = require('./auth');
+const { defaultLlmProviderRows } = require('./llm-providers');
 
 const DEPARTMENTS = [
   ['dept-management', '管理层/待分配'],
@@ -122,6 +123,7 @@ function createInitialData(now = new Date().toISOString()) {
     record_notes: [],
     record_processing_events: [],
     export_files: [],
+    llm_providers: defaultLlmProviderRows(now),
     system_settings: [],
     system_meta: [{
       id: 'system-meta',

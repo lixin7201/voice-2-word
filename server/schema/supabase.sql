@@ -145,6 +145,35 @@ create table if not exists export_files (
   created_at timestamptz not null default now()
 );
 
+create table if not exists llm_providers (
+  id text primary key,
+  display_name text not null,
+  provider_key text not null,
+  channel_id text not null,
+  protocol text not null,
+  base_url text not null,
+  endpoint_path text,
+  api_key text,
+  request_model text not null,
+  priority integer not null default 100,
+  enabled boolean not null default false,
+  allow_fallback boolean not null default true,
+  timeout_ms integer not null default 120000,
+  reasoning_effort text,
+  supports_json boolean not null default true,
+  supports_files boolean not null default false,
+  last_test_status text,
+  last_test_message text,
+  last_test_at timestamptz,
+  last_call_status text,
+  last_call_message text,
+  last_call_at timestamptz,
+  created_by uuid references employees(id),
+  updated_by uuid references employees(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists system_settings (
   id uuid primary key default gen_random_uuid(),
   key text not null unique,
@@ -191,4 +220,5 @@ create index if not exists idx_audio_records_status on audio_records(status);
 create index if not exists idx_audio_records_asr_task_id on audio_records(asr_task_id);
 create index if not exists idx_audio_records_created_at on audio_records(created_at);
 create index if not exists idx_record_processing_events_record on record_processing_events(audio_record_id);
+create index if not exists idx_llm_providers_priority on llm_providers(priority);
 create index if not exists idx_system_settings_key on system_settings(key);

@@ -1450,11 +1450,12 @@ test('editable forms render save controls as explicit action buttons', () => {
   assert.match(followupHtml, /未判断\/不适用/);
 });
 
-test('hosted export downloads use the current backend origin with token auth', async () => {
+test('hosted export downloads use the current backend origin with scoped download tokens', async () => {
   const { api, clickedLinks, fetchCalls } = loadSidepanel({
     origin: 'http://127.0.0.1:8137',
     exportResponse: (body) => ({
       downloadUrl: `http://localhost:0/api/export-files/export-${body.target}-${body.format}`,
+      downloadToken: `download-${body.target}-${body.format}`,
       export: { format: body.format },
     }),
   });
@@ -1466,8 +1467,8 @@ test('hosted export downloads use the current backend origin with token auth', a
 
   assert.equal(api.activeApiBaseUrl(), 'http://127.0.0.1:8137');
   assert.equal(
-    api.authedDownloadUrl('http://localhost:0/api/export-files/export-summary-md'),
-    'http://127.0.0.1:8137/api/export-files/export-summary-md?access_token=token-abc',
+    api.authedDownloadUrl('http://localhost:0/api/export-files/export-summary-md', 'download-abc'),
+    'http://127.0.0.1:8137/api/export-files/export-summary-md?download_token=download-abc',
   );
 
   await api.exportRecord('summary', 'md');
@@ -1476,8 +1477,9 @@ test('hosted export downloads use the current backend origin with token auth', a
   assert.equal(fetchCalls[0].requestOptions.method, 'POST');
   assert.equal(fetchCalls[0].requestOptions.headers.Authorization, 'Bearer token-abc');
   assert.deepEqual(JSON.parse(fetchCalls[0].requestOptions.body), { target: 'summary', format: 'md' });
+  assert.equal(clickedLinks[0].href.includes('access_token='), false);
   assert.deepEqual(clickedLinks, [{
-    href: 'http://127.0.0.1:8137/api/export-files/export-summary-md?access_token=token-abc',
+    href: 'http://127.0.0.1:8137/api/export-files/export-summary-md?download_token=download-summary-md',
     download: '录音总结-summary.md',
   }]);
   assert.equal(api.appState.exportNotice, '总结 Markdown 已生成');
@@ -1486,8 +1488,9 @@ test('hosted export downloads use the current backend origin with token auth', a
 
   assert.equal(fetchCalls[1].url, 'http://127.0.0.1:8137/api/records/rec_1/export');
   assert.deepEqual(JSON.parse(fetchCalls[1].requestOptions.body), { target: 'all_files', format: 'zip' });
+  assert.equal(clickedLinks[1].href.includes('access_token='), false);
   assert.deepEqual(clickedLinks[1], {
-    href: 'http://127.0.0.1:8137/api/export-files/export-all_files-zip?access_token=token-abc',
+    href: 'http://127.0.0.1:8137/api/export-files/export-all_files-zip?download_token=download-all_files-zip',
     download: '录音总结-all_files.zip',
   });
   assert.equal(api.appState.exportNotice, '全部文件 ZIP 已生成');
@@ -1517,6 +1520,36 @@ test('settings page renders recent settings audit records without secret metadat
     settingsUpdatedAt: '2026-06-17T03:00:00.000Z',
     settingsUpdatedBy: '离心',
   };
+  api.appState.llmProviderPresets = [{
+    id: 'llm_sub2api_gpt55',
+    displayName: 'AI 大宜宾 sub2api - GPT-5.5',
+  }];
+  api.appState.llmProviders = [{
+    id: 'llm_sub2api_gpt55',
+    displayName: 'AI 大宜宾 sub2api - GPT-5.5',
+    providerKey: 'sub2api',
+    channelId: 'sub2api',
+    protocol: 'openai-responses',
+    baseUrl: 'http://127.0.0.1:8080/v1',
+    endpointPath: '/responses',
+    requestModel: 'gpt-5.5',
+    priority: 20,
+    enabled: true,
+    allowFallback: true,
+    configured: true,
+    maskedApiKey: 'sk-...abcd',
+    lastTestStatus: 'passed',
+    lastTestAt: '2026-06-17T03:00:00.000Z',
+    lastCallStatus: 'success',
+    lastCallAt: '2026-06-17T03:01:00.000Z',
+  }];
+  api.appState.llmProviderDraft = {
+    protocol: 'openai-responses',
+    baseUrl: 'http://127.0.0.1:8080/v1',
+    requestModel: 'gpt-5.5',
+    reasoningEffort: 'high',
+    configured: false,
+  };
   api.appState.auditLogs = [
     {
       id: 'audit_1',
@@ -1538,6 +1571,14 @@ test('settings page renders recent settings audit records without secret metadat
       id: 'audit_3',
       createdAt: '2026-06-17T03:02:00.000Z',
       actorName: '离心',
+      action: 'test_llm_provider',
+      targetType: 'llm_provider',
+      targetId: 'llm_sub2api_gpt55',
+    },
+    {
+      id: 'audit_4',
+      createdAt: '2026-06-17T03:02:00.000Z',
+      actorName: '离心',
       action: 'update_employee',
       targetType: 'employee',
       targetId: 'emp-1',
@@ -1550,8 +1591,21 @@ test('settings page renders recent settings audit records without secret metadat
   assert.match(html, /data-action="save-settings-group"/);
   assert.match(html, /保存本组/);
   assert.match(html, /保存全部设置/);
+  assert.match(html, /总结模型池/);
+  assert.match(html, /AI 大宜宾 sub2api - GPT-5\.5/);
+  assert.match(html, /openai-responses/);
+  assert.match(html, /Base URL/);
+  assert.match(html, /模型名称/);
+  assert.match(html, /Reasoning Effort/);
+  assert.doesNotMatch(html, /Provider 标识/);
+  assert.doesNotMatch(html, /通道标识/);
+  assert.doesNotMatch(html, /Endpoint Path/);
+  assert.doesNotMatch(html, /超时毫秒/);
+  assert.match(html, /sk-\.\.\.abcd/);
+  assert.doesNotMatch(html, /sub2api-secret-key/);
   assert.match(html, /保存设置/);
   assert.match(html, /测试设置/);
+  assert.match(html, /测试模型/);
   assert.doesNotMatch(html, /update_employee/);
   const auditSection = html.match(/<section class="settings-audit">[\s\S]*?<\/section>/)?.[0] || '';
   assert.doesNotMatch(auditSection, /secret|apiKey|metadata/i);

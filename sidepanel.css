@@ -727,6 +727,65 @@ textarea:focus {
   border: 1px solid var(--line);
 }
 
+.llm-provider-section {
+  display: grid;
+  gap: 12px;
+  padding: 11px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.54);
+  border: 1px solid var(--line);
+}
+
+.llm-preset-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 6px;
+}
+
+.llm-provider-list {
+  display: grid;
+  gap: 8px;
+}
+
+.llm-provider-row {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(146, 170, 177, 0.32);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.llm-provider-main {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.llm-provider-main .meta,
+.llm-provider-main .hint {
+  overflow-wrap: anywhere;
+}
+
+.llm-provider-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(74px, 1fr));
+  gap: 6px;
+}
+
+.llm-provider-actions .btn {
+  min-width: 0;
+}
+
+.llm-provider-form {
+  display: grid;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid rgba(46, 123, 189, 0.24);
+  border-radius: var(--radius);
+  background: rgba(248, 253, 253, 0.72);
+}
+
 .inline-check {
   display: inline-flex;
   align-items: center;

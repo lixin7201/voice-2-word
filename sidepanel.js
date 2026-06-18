@@ -48,6 +48,9 @@ const appState = {
   settingGroups: [],
   systemStatus: null,
   settingsMeta: null,
+  llmProviders: [],
+  llmProviderPresets: [],
+  llmProviderDraft: null,
   auditLogs: [],
   secretActions: {},
   settingChoices: {},
@@ -1553,6 +1556,7 @@ function renderSettings() {
           <button class="btn primary" type="button" data-action="save-settings" ${appState.busy || !appState.settingGroups.length ? 'disabled' : ''}>保存全部设置</button>
         </div>
       </div>
+      ${renderLlmProviderPool()}
       ${renderSettingsSyncRules(status)}
       ${renderSettingsAuditLogs()}
     </section>
@@ -1660,9 +1664,115 @@ function renderSettingField(field) {
   `;
 }
 
+function renderLlmProviderPool() {
+  const providers = appState.llmProviders || [];
+  const presets = appState.llmProviderPresets || [];
+  return `
+    <section class="llm-provider-section">
+      <div class="item-title">
+        <div>
+          <h3>总结模型池</h3>
+          <div class="hint">按列表顺序调用，可用上移/下移调整；API Key 只保存在后端。</div>
+        </div>
+        <button class="btn primary" type="button" data-action="new-llm-provider">新增模型</button>
+      </div>
+      <div class="llm-preset-row">
+        ${presets.map((preset) => `
+          <button class="secret-action" type="button" data-action="new-llm-provider" data-preset-id="${escapeHtml(preset.id)}">${escapeHtml(preset.displayName)}</button>
+        `).join('')}
+      </div>
+      ${providers.length ? `
+        <div class="llm-provider-list">
+          ${providers.map((provider, index) => renderLlmProviderRow(provider, index, providers.length)).join('')}
+        </div>
+      ` : '<div class="empty">暂无模型，请选择模板新增。</div>'}
+      ${appState.llmProviderDraft ? renderLlmProviderForm(appState.llmProviderDraft) : ''}
+    </section>
+  `;
+}
+
+function renderLlmProviderRow(provider, index, total) {
+  const testLabel = provider.lastTestStatus ? `${provider.lastTestStatus === 'passed' ? '成功' : '失败'}${provider.lastTestAt ? ` · ${formatDate(provider.lastTestAt)}` : ''}` : '未测试';
+  const callLabel = provider.lastCallStatus ? `${provider.lastCallStatus === 'success' ? '成功' : '失败'}${provider.lastCallAt ? ` · ${formatDate(provider.lastCallAt)}` : ''}` : '未调用';
+  return `
+    <article class="llm-provider-row">
+      <div class="llm-provider-main">
+        <div class="item-title compact">
+          <strong>${escapeHtml(provider.displayName || provider.providerKey)}</strong>
+          <span class="badge ${provider.enabled ? 'completed' : ''}">第 ${index + 1} 个 · ${provider.enabled ? '启用' : '停用'}</span>
+        </div>
+        <div class="meta">${escapeHtml(provider.protocol)} · ${escapeHtml(provider.baseUrl)} · ${escapeHtml(provider.requestModel)}</div>
+        <div class="meta">Key ${provider.configured ? escapeHtml(provider.maskedApiKey || '已保存') : '未配置'} · 最近测试 ${escapeHtml(testLabel)} · 最近调用 ${escapeHtml(callLabel)}</div>
+        ${provider.lastTestMessage ? `<div class="hint">${escapeHtml(provider.lastTestMessage)}</div>` : ''}
+        ${provider.lastCallMessage ? `<div class="hint">${escapeHtml(provider.lastCallMessage)}</div>` : ''}
+      </div>
+      <div class="llm-provider-actions">
+        <button class="btn" type="button" data-action="move-llm-provider" data-id="${escapeHtml(provider.id)}" data-direction="up" ${index === 0 ? 'disabled' : ''}>上移排序</button>
+        <button class="btn" type="button" data-action="move-llm-provider" data-id="${escapeHtml(provider.id)}" data-direction="down" ${index === total - 1 ? 'disabled' : ''}>下移排序</button>
+        <button class="btn" type="button" data-action="edit-llm-provider" data-id="${escapeHtml(provider.id)}">编辑</button>
+        <button class="btn" type="button" data-action="test-existing-llm-provider" data-id="${escapeHtml(provider.id)}">测试</button>
+        <button class="btn" type="button" data-action="toggle-llm-provider" data-id="${escapeHtml(provider.id)}" data-enabled="${provider.enabled ? '0' : '1'}">${provider.enabled ? '停用' : '启用'}</button>
+        <button class="btn danger" type="button" data-action="delete-llm-provider" data-id="${escapeHtml(provider.id)}">删除</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderLlmProviderForm(draft) {
+  const isEditing = Boolean(draft.id);
+  return `
+    <div class="llm-provider-form" id="llm-provider-form">
+      <div class="item-title compact">
+        <h3>${isEditing ? '编辑模型' : '新增模型'}</h3>
+        <button class="btn ghost" type="button" data-action="cancel-llm-provider">取消</button>
+      </div>
+      <input id="llm-provider-id" type="hidden" value="${escapeHtml(draft.id || '')}">
+      <div class="grid-2">
+        <div class="field">
+          <label for="llm-provider-protocol">协议</label>
+          <select id="llm-provider-protocol">
+            ${['openai-responses', 'openai-chat', 'anthropic-messages', 'gemini-native'].map((protocol) => `
+              <option value="${escapeHtml(protocol)}" ${draft.protocol === protocol ? 'selected' : ''}>${escapeHtml(protocol)}</option>
+            `).join('')}
+          </select>
+        </div>
+        ${renderLlmInput('llm-provider-base-url', 'Base URL', draft.baseUrl)}
+        ${renderLlmInput('llm-provider-request-model', '模型名称', draft.requestModel)}
+        <div class="field">
+          <label for="llm-provider-reasoning-effort">Reasoning Effort</label>
+          <select id="llm-provider-reasoning-effort">
+            ${['low', 'medium', 'high', 'xhigh'].map((effort) => `
+              <option value="${escapeHtml(effort)}" ${String(draft.reasoningEffort || 'high') === effort ? 'selected' : ''}>${escapeHtml(effort)}</option>
+            `).join('')}
+          </select>
+        </div>
+      </div>
+      <div class="field secret-field">
+        <label for="llm-provider-api-key">API Key</label>
+        <div class="secret-state">${draft.configured ? `已配置：${escapeHtml(draft.maskedApiKey || '已保存')}` : '未配置'}</div>
+        <input id="llm-provider-api-key" type="password" value="" placeholder="${draft.configured ? '留空则保留现有密钥' : '输入模型 API Key'}">
+      </div>
+      ${draft.testMessage ? `<div class="status ${draft.testStatus === 'passed' ? 'success' : 'error'}">${escapeHtml(draft.testMessage)}</div>` : ''}
+      <div class="btn-row">
+        <button class="btn" type="button" data-action="test-llm-provider" ${appState.busy ? 'disabled' : ''}>测试连接</button>
+        <button class="btn primary" type="button" data-action="save-llm-provider" ${appState.busy ? 'disabled' : ''}>保存模型</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderLlmInput(id, label, value, type = 'text') {
+  return `
+    <div class="field">
+      <label for="${escapeHtml(id)}">${escapeHtml(label)}</label>
+      <input id="${escapeHtml(id)}" type="${escapeHtml(type)}" value="${escapeHtml(value ?? '')}">
+    </div>
+  `;
+}
+
 function renderSettingsAuditLogs() {
   const logs = (appState.auditLogs || [])
-    .filter((log) => log.targetType === 'system_settings')
+    .filter((log) => ['system_settings', 'llm_provider'].includes(log.targetType))
     .slice(0, 50);
   return `
     <section class="settings-audit">
@@ -1690,6 +1800,11 @@ function auditActionLabel(action) {
   return ({
     update_system_settings: '保存设置',
     test_system_settings: '测试设置',
+    create_llm_provider: '新增模型',
+    update_llm_provider: '修改模型',
+    test_llm_provider: '测试模型',
+    reorder_llm_providers: '调整模型优先级',
+    delete_llm_provider: '删除模型',
   })[action] || action || '操作';
 }
 
@@ -2205,6 +2320,25 @@ function bindCurrentView() {
     await loadSettingsSafe();
     render();
   });
+
+  onClick('button[data-action="new-llm-provider"]', (_event, button) => {
+    startLlmProviderDraft(button.dataset.presetId || '');
+    render();
+  });
+  onClick('button[data-action="edit-llm-provider"]', (_event, button) => {
+    editLlmProviderDraft(button.dataset.id);
+    render();
+  });
+  onClick('button[data-action="cancel-llm-provider"]', () => {
+    appState.llmProviderDraft = null;
+    render();
+  });
+  onClick('button[data-action="test-llm-provider"]', testLlmProviderDraft);
+  onClick('button[data-action="save-llm-provider"]', saveLlmProviderDraft);
+  onClick('button[data-action="test-existing-llm-provider"]', (_event, button) => testExistingLlmProvider(button.dataset.id));
+  onClick('button[data-action="toggle-llm-provider"]', (_event, button) => toggleLlmProvider(button.dataset.id, button.dataset.enabled === '1'));
+  onClick('button[data-action="move-llm-provider"]', (_event, button) => moveLlmProvider(button.dataset.id, button.dataset.direction));
+  onClick('button[data-action="delete-llm-provider"]', (_event, button) => deleteLlmProvider(button.dataset.id));
 
   const profileForm = document.getElementById('profile-form');
   onSubmit(profileForm, saveProfile, { action: 'profile.save' });
@@ -3031,7 +3165,7 @@ async function exportRecord(target, format) {
       method: 'POST',
       body: { target, format },
     });
-    const downloadUrl = authedDownloadUrl(body.downloadUrl);
+    const downloadUrl = authedDownloadUrl(body.downloadUrl, body.downloadToken);
     const filename = `${appState.detail.title || '录音记录'}-${target}.${format}`;
     showExportNotice(`${exportTargetLabel(target)} ${formatLabel(format)} 已生成`);
     setStatus('导出已生成。', 'success');
@@ -3189,6 +3323,217 @@ async function testSettings(target) {
   }, true);
 }
 
+function startLlmProviderDraft(presetId = '') {
+  const preset = (appState.llmProviderPresets || []).find((item) => item.id === presetId) || {};
+  appState.llmProviderDraft = llmProviderToDraft({
+    ...preset,
+    id: '',
+    enabled: preset.enabled || false,
+    configured: false,
+    maskedApiKey: '',
+  });
+}
+
+function editLlmProviderDraft(id) {
+  const provider = (appState.llmProviders || []).find((item) => item.id === id);
+  if (!provider) return;
+  appState.llmProviderDraft = llmProviderToDraft(provider);
+}
+
+function llmProviderToDraft(provider = {}) {
+  return {
+    id: provider.id || '',
+    displayName: provider.displayName || '',
+    providerKey: provider.providerKey || '',
+    channelId: provider.channelId || provider.providerKey || '',
+    protocol: provider.protocol || 'openai-responses',
+    baseUrl: provider.baseUrl || '',
+    endpointPath: provider.endpointPath || '',
+    requestModel: provider.requestModel || '',
+    priority: provider.priority || 100,
+    enabled: Boolean(provider.enabled),
+    allowFallback: provider.allowFallback !== false,
+    timeoutMs: provider.timeoutMs || 120000,
+    reasoningEffort: provider.reasoningEffort || 'high',
+    configured: Boolean(provider.configured),
+    maskedApiKey: provider.maskedApiKey || '',
+    testStatus: '',
+    testMessage: '',
+  };
+}
+
+function collectLlmProviderDraft() {
+  const value = (id) => document.getElementById(id)?.value || '';
+  const current = appState.llmProviderDraft || {};
+  const protocol = value('llm-provider-protocol') || current.protocol || 'openai-responses';
+  const baseUrl = value('llm-provider-base-url').trim();
+  const requestModel = value('llm-provider-request-model').trim();
+  const inferred = inferLlmProviderDefaults({ ...current, protocol, baseUrl, requestModel });
+  const body = {
+    id: value('llm-provider-id'),
+    displayName: current.displayName || inferred.displayName,
+    providerKey: current.providerKey || inferred.providerKey,
+    channelId: current.channelId || inferred.channelId,
+    protocol,
+    baseUrl,
+    endpointPath: current.endpointPath || inferred.endpointPath,
+    requestModel,
+    priority: Number(current.priority || inferred.priority || 100),
+    enabled: true,
+    allowFallback: true,
+    timeoutMs: Number(current.timeoutMs || 120000),
+    reasoningEffort: value('llm-provider-reasoning-effort') || 'high',
+    clearApiKey: false,
+  };
+  const apiKey = value('llm-provider-api-key').trim();
+  if (apiKey) body.apiKey = apiKey;
+  return body;
+}
+
+function inferLlmProviderDefaults(draft = {}) {
+  const protocol = draft.protocol || 'openai-responses';
+  const baseUrl = String(draft.baseUrl || '').toLowerCase();
+  const requestModel = String(draft.requestModel || '').toLowerCase();
+  if (baseUrl.includes('aisoeasy') || draft.providerKey === 'easyai') {
+    return {
+      displayName: 'EasyAI GPT-5.5',
+      providerKey: 'easyai',
+      channelId: 'easyai',
+      endpointPath: protocol === 'openai-chat' ? '/chat/completions' : '/responses',
+      priority: 10,
+    };
+  }
+  if (baseUrl.includes('127.0.0.1:8080') || baseUrl.includes('localhost:8080') || draft.providerKey === 'sub2api') {
+    return {
+      displayName: 'AI 大宜宾 sub2api - GPT-5.5',
+      providerKey: 'sub2api',
+      channelId: 'sub2api',
+      endpointPath: '/responses',
+      priority: 20,
+    };
+  }
+  if (baseUrl.includes('kimi') || requestModel.includes('kimi') || draft.providerKey === 'kimi') {
+    return {
+      displayName: 'Kimi K2.6',
+      providerKey: 'kimi',
+      channelId: 'kimi',
+      endpointPath: '/chat/completions',
+      priority: 30,
+    };
+  }
+  const providerKey = slugifyProviderKey(requestModel || protocol || 'custom-model');
+  return {
+    displayName: draft.displayName || draft.requestModel || '自定义模型',
+    providerKey,
+    channelId: providerKey,
+    endpointPath: protocol === 'openai-chat' ? '/chat/completions' : protocol === 'openai-responses' ? '/responses' : '',
+    priority: 100,
+  };
+}
+
+function slugifyProviderKey(value) {
+  const slug = String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  return slug || 'custom-model';
+}
+
+function syncLlmProviderDraftFromForm(patch = {}) {
+  const current = appState.llmProviderDraft || {};
+  appState.llmProviderDraft = {
+    ...current,
+    ...collectLlmProviderDraft(),
+    ...patch,
+  };
+}
+
+async function testLlmProviderDraft() {
+  syncLlmProviderDraftFromForm({ testStatus: '', testMessage: '正在测试模型连接...' });
+  render();
+  await runBusy(async () => {
+    const body = await api('/api/admin/llm-providers/test', {
+      method: 'POST',
+      body: collectLlmProviderDraft(),
+      timeoutMs: 140000,
+    });
+    syncLlmProviderDraftFromForm({
+      testStatus: body.ok ? 'passed' : 'failed',
+      testMessage: body.message || (body.ok ? '模型测试通过' : '模型测试失败'),
+    });
+    await loadLlmProvidersSafe();
+    await loadAuditLogsSafe();
+    setStatus(body.message || '模型测试完成', body.ok ? 'success' : 'error');
+  }, true);
+}
+
+async function saveLlmProviderDraft() {
+  const draft = collectLlmProviderDraft();
+  await runBusy(async () => {
+    const body = await api(draft.id ? `/api/admin/llm-providers/${encodeURIComponent(draft.id)}` : '/api/admin/llm-providers', {
+      method: draft.id ? 'PATCH' : 'POST',
+      body: draft.enabled ? draft : { ...draft, forceSaveWithoutTest: true },
+      timeoutMs: 140000,
+    });
+    await loadSettings();
+    appState.llmProviderDraft = null;
+    setStatus(`${body.provider?.displayName || '模型'}已保存。`, 'success');
+  }, true);
+}
+
+async function testExistingLlmProvider(id) {
+  await runBusy(async () => {
+    const body = await api('/api/admin/llm-providers/test', {
+      method: 'POST',
+      body: { id },
+      timeoutMs: 140000,
+    });
+    await loadLlmProvidersSafe();
+    await loadAuditLogsSafe();
+    setStatus(body.message || '模型测试完成', body.ok ? 'success' : 'error');
+  }, true);
+}
+
+async function toggleLlmProvider(id, enabled) {
+  await runBusy(async () => {
+    await api(`/api/admin/llm-providers/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: { enabled, forceSaveWithoutTest: !enabled },
+      timeoutMs: 140000,
+    });
+    await loadSettings();
+    setStatus(enabled ? '模型已启用。' : '模型已停用。', 'success');
+  }, true);
+}
+
+async function moveLlmProvider(id, direction) {
+  const providers = (appState.llmProviders || []).slice();
+  const index = providers.findIndex((provider) => provider.id === id);
+  const targetIndex = direction === 'up' ? index - 1 : index + 1;
+  if (index < 0 || targetIndex < 0 || targetIndex >= providers.length) return;
+  const [provider] = providers.splice(index, 1);
+  providers.splice(targetIndex, 0, provider);
+  await runBusy(async () => {
+    const body = await api('/api/admin/llm-providers/reorder', {
+      method: 'POST',
+      body: { ids: providers.map((item) => item.id) },
+    });
+    appState.llmProviders = body.providers || [];
+    await loadAuditLogsSafe();
+    setStatus('模型优先级已更新。', 'success');
+  }, true);
+}
+
+async function deleteLlmProvider(id) {
+  if (typeof window.confirm === 'function' && !window.confirm('确认删除这个模型？')) return;
+  await runBusy(async () => {
+    await api(`/api/admin/llm-providers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await loadSettings();
+    setStatus('模型已删除。', 'success');
+  }, true);
+}
+
 async function loadMe() {
   const body = await api('/api/me');
   appState.currentUser = body.employee;
@@ -3230,12 +3575,29 @@ async function loadSettings() {
   appState.systemStatus = body.status || null;
   appState.settingsMeta = body.meta || null;
   appState.settingChoices = {};
+  await loadLlmProviders();
   await loadAuditLogsSafe();
 }
 
 async function loadSettingsSafe() {
   if (!appState.permissions.canManageSettings) return;
   await runBusy(loadSettings, false);
+}
+
+async function loadLlmProviders() {
+  const body = await api('/api/admin/llm-providers');
+  appState.llmProviders = body.providers || [];
+  appState.llmProviderPresets = body.presets || [];
+}
+
+async function loadLlmProvidersSafe() {
+  if (!appState.permissions.canManageSettings) return;
+  try {
+    await loadLlmProviders();
+  } catch {
+    appState.llmProviders = [];
+    appState.llmProviderPresets = [];
+  }
 }
 
 async function loadAuditLogsSafe() {
@@ -3408,7 +3770,7 @@ function renderSettingsSyncRules(status) {
     <div class="settings-sync">
       <h3>员工端同步</h3>
       <div class="sync-grid">
-        <span>DashScope/R2/EasyAI/Kimi 参数</span><strong>下次上传或总结立即使用</strong>
+        <span>DashScope/R2/总结模型池参数</span><strong>下次上传或总结立即使用</strong>
         <span>演示模式</span><strong>下次处理立即生效</strong>
         <span>个人资料和 AI 偏好</span><strong>重新生成总结时使用</strong>
         <span>员工插件连接地址</span><strong>服务器地址变更时需在登录页修改</strong>
@@ -3523,7 +3885,7 @@ function testTargetForGroup(groupId) {
     service: 'publicBaseUrl',
     asr: 'dashscope',
     storage: 'r2',
-    llm: 'all',
+    llm: 'llm',
   })[groupId] || 'all';
 }
 
@@ -3855,9 +4217,9 @@ function apiDownloadUrl(path) {
   return url.href;
 }
 
-function authedDownloadUrl(path) {
+function authedDownloadUrl(path, downloadToken = '') {
   const url = new URL(apiDownloadUrl(path));
-  if (appState.accessToken) url.searchParams.set('access_token', appState.accessToken);
+  if (downloadToken) url.searchParams.set('download_token', downloadToken);
   return url.href;
 }
 

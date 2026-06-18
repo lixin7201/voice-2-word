@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { DEFAULT_TASK_TIMEOUT_MS, normalizeDashScopeTranscription, waitForDashScopeTask } = require('./dashscope');
 const { chatCompletionsUrl } = require('./llm');
-const { presignR2Url } = require('./r2');
+const { presignR2Url, putR2Object } = require('./r2');
 const { detectRecruitmentStage } = require('./templates');
 const { normalizeMindMap } = require('./mind-map');
 
@@ -89,6 +89,27 @@ test('creates Cloudflare R2 presigned S3-compatible URLs', () => {
   assert.ok(url.includes('X-Amz-Algorithm=AWS4-HMAC-SHA256'));
   assert.ok(url.includes('X-Amz-Expires=7200'));
   assert.ok(url.includes('X-Amz-Signature='));
+});
+
+test('R2 uploads accept streaming bodies without buffering whole audio files', async () => {
+  const calls = [];
+  const streamBody = {
+    pipe() {},
+  };
+  await putR2Object({
+    r2AccountId: 'account-id',
+    r2AccessKeyId: 'access-key',
+    r2SecretAccessKey: 'secret-key',
+    r2Bucket: 'voice-bucket',
+  }, 'audio/large.mp3', streamBody, 'audio/mpeg', async (url, options) => {
+    calls.push({ url, options });
+    return { ok: true };
+  }, { contentLength: 1234 });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.body, streamBody);
+  assert.equal(calls[0].options.duplex, 'half');
+  assert.equal(calls[0].options.headers['Content-Length'], '1234');
 });
 
 test('accepts LLM base URLs with or without /v1', () => {

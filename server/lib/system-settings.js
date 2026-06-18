@@ -1,3 +1,5 @@
+const { hasConfiguredLlmProvider } = require('./llm-providers');
+
 const DEFAULT_PUBLIC_BASE_URL = 'http://lixindemac-studio.local:8127';
 
 const SETTING_GROUPS = [
@@ -36,7 +38,7 @@ const SETTING_GROUPS = [
       { key: 'dashscopeModel', label: 'DashScope 模型', type: 'text', defaultValue: 'fun-asr' },
       { key: 'dashscopeVocabularyId', label: '热词表 ID', type: 'text', help: '没有热词表时留空。' },
       { key: 'dashscopePollIntervalMs', label: '查询间隔毫秒', type: 'number', defaultValue: '5000' },
-      { key: 'dashscopeTimeoutMs', label: '最长等待毫秒', type: 'number', defaultValue: '1200000' },
+      { key: 'dashscopeTimeoutMs', label: '最长等待毫秒', type: 'number', defaultValue: '46800000' },
     ],
   },
   {
@@ -53,13 +55,13 @@ const SETTING_GROUPS = [
   },
   {
     id: 'llm',
-    title: '总结模型',
-    description: '优先使用 EasyAI，总结失败或未配置时回退到 Kimi，再不配置则用本地模板。',
+    title: '旧版总结模型兜底',
+    description: '模型池未启用可用模型时，才使用这些旧字段兜底；新模型请在“总结模型池”里配置。',
     fields: [
-      { key: 'easyAiBaseUrl', label: 'EasyAI 地址', type: 'url', defaultValue: 'https://aisoeasy.cc' },
+      { key: 'easyAiBaseUrl', label: 'EasyAI 地址', type: 'url', defaultValue: 'https://aisoeasy.cc/v1' },
       { key: 'easyAiApiKey', label: 'EasyAI API Key', type: 'password', secret: true },
       { key: 'easyAiModel', label: 'EasyAI 模型', type: 'text', defaultValue: 'gpt-5.5' },
-      { key: 'kimiBaseUrl', label: 'Kimi 地址', type: 'url', defaultValue: 'https://api.moonshot.cn' },
+      { key: 'kimiBaseUrl', label: 'Kimi 地址', type: 'url', defaultValue: 'https://api.kimi.com/coding/v1' },
       { key: 'kimiApiKey', label: 'Kimi API Key', type: 'password', secret: true },
       { key: 'kimiModel', label: 'Kimi 模型', type: 'text', defaultValue: 'kimi-k2.6' },
     ],
@@ -126,7 +128,7 @@ function serializeSystemSettings(baseConfig, store) {
       devFakeAsr: Boolean(runtimeConfig.devFakeAsr),
       r2Configured: Boolean(runtimeConfig.r2AccountId && runtimeConfig.r2AccessKeyId && runtimeConfig.r2SecretAccessKey && runtimeConfig.r2Bucket),
       dashscopeConfigured: Boolean(runtimeConfig.dashscopeApiKey),
-      llmConfigured: Boolean(runtimeConfig.easyAiApiKey || runtimeConfig.kimiApiKey),
+      llmConfigured: hasConfiguredLlmProvider(runtimeConfig, store),
     },
   };
 }

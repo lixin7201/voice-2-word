@@ -16,7 +16,16 @@ const {
 const { normalizeMindMap } = require('./lib/mind-map');
 const { deleteR2Objects, isR2Configured, presignR2Url, putR2Object } = require('./lib/r2');
 const { isDashScopeConfigured, fetchDashScopeTranscription, resolveDashScopeBaseUrl, submitDashScopeTask, waitForDashScopeTask } = require('./lib/dashscope');
-const { generateSummary } = require('./lib/llm');
+const { generateSummary, testLlmProviderConnection } = require('./lib/llm');
+const {
+  DEFAULT_LLM_PROVIDER_TEMPLATES,
+  GENERATION_PROTOCOLS,
+  SUPPORTED_PROTOCOLS,
+  hasConfiguredLlmProvider,
+  providerForCall,
+  serializeLlmProvider,
+  serializeLlmProviderPreset,
+} = require('./lib/llm-providers');
 const {
   buildExportBundle,
   buildExportSvg,
@@ -34,6 +43,12 @@ const DEFAULT_UPLOAD_DIR = path.join(process.cwd(), 'uploads');
 const DEFAULT_EXPORT_DIR = path.join(process.cwd(), 'exports');
 const MAX_AUDIO_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_AUDIO_SECONDS = 12 * 60 * 60;
+const MAX_MULTIPART_OVERHEAD_BYTES = 1024 * 1024;
+const MAX_AVATAR_UPLOAD_BYTES = 3 * 1024 * 1024;
+const MAX_JSON_BODY_BYTES = 1024 * 1024;
+const MAX_MULTIPART_FIELD_BYTES = 64 * 1024;
+const INSECURE_DEV_JWT_SECRET = 'voice-2-word-local-dev-secret';
+const PLACEHOLDER_JWT_SECRET = 'change-me-in-local-env';
 const SUPPORTED_EXTENSIONS = new Set(['mp3', 'm4a', 'wav', 'aac', 'flac', 'ogg', 'opus', 'mp4', 'mov', 'webm']);
 const SUPPORTED_AVATAR_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp']);
 const WEB_ASSETS = new Map([
@@ -50,8 +65,9 @@ function createVoiceServer(options = {}) {
     dataFile: options.dataFile || process.env.DATA_FILE || DEFAULT_DATA_FILE,
     uploadDir: options.uploadDir || process.env.UPLOAD_DIR || DEFAULT_UPLOAD_DIR,
     exportDir: options.exportDir || process.env.EXPORT_DIR || DEFAULT_EXPORT_DIR,
-    jwtSecret: options.jwtSecret || process.env.JWT_SECRET || 'voice-2-word-local-dev-secret',
+    jwtSecret: resolveJwtSecret(options.jwtSecret ?? process.env.JWT_SECRET),
     publicBaseUrl: options.publicBaseUrl || process.env.PUBLIC_BASE_URL || 'http://lixindemac-studio.local:8127',
+    allowedOrigins: options.allowedOrigins ?? process.env.CORS_ALLOWED_ORIGINS,
     devFakeAsr: options.devFakeAsr ?? process.env.VOICE_TO_WORD_DEV_FAKE_ASR === '1',
     dashscopeApiKey: options.dashscopeApiKey ?? process.env.DASHSCOPE_API_KEY,
     dashscopeBaseUrl: options.dashscopeBaseUrl || process.env.DASHSCOPE_BASE_URL,
@@ -64,10 +80,13 @@ function createVoiceServer(options = {}) {
     r2SecretAccessKey: options.r2SecretAccessKey || process.env.CLOUDFLARE_R2_SECRET_ACCESS_KEY,
     r2Bucket: options.r2Bucket || process.env.CLOUDFLARE_R2_BUCKET,
     r2Endpoint: options.r2Endpoint || process.env.CLOUDFLARE_R2_ENDPOINT,
-    easyAiBaseUrl: options.easyAiBaseUrl || process.env.EASYAI_BASE_URL || 'https://aisoeasy.cc',
+    easyAiBaseUrl: options.easyAiBaseUrl || process.env.EASYAI_BASE_URL || 'https://aisoeasy.cc/v1',
     easyAiApiKey: options.easyAiApiKey || process.env.EASYAI_API_KEY,
     easyAiModel: options.easyAiModel || process.env.EASYAI_MODEL || 'gpt-5.5',
-    kimiBaseUrl: options.kimiBaseUrl || process.env.KIMI_BASE_URL || 'https://api.moonshot.cn',
+    sub2apiBaseUrl: options.sub2apiBaseUrl || process.env.SUB2API_BASE_URL || process.env.LIXINGPT_BASE_URL || 'http://127.0.0.1:8080/v1',
+    sub2apiApiKey: options.sub2apiApiKey || process.env.SUB2API_API_KEY || process.env.LIXINGPT_API_KEY,
+    sub2apiModel: options.sub2apiModel || process.env.SUB2API_MODEL || process.env.LIXINGPT_MODEL || 'gpt-5.5',
+    kimiBaseUrl: options.kimiBaseUrl || process.env.KIMI_BASE_URL || 'https://api.kimi.com/coding/v1',
     kimiApiKey: options.kimiApiKey || process.env.KIMI_API_KEY,
     kimiModel: options.kimiModel || process.env.KIMI_MODEL || 'kimi-k2.6',
   };
@@ -78,7 +97,7 @@ function createVoiceServer(options = {}) {
   }
 
   return http.createServer(async (req, res) => {
-    setCorsHeaders(res);
+    setCorsHeaders(req, res, config);
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
@@ -90,10 +109,22 @@ function createVoiceServer(options = {}) {
     } catch (error) {
       const status = error.statusCode || 500;
       sendJson(res, status, {
-        error: error.publicMessage || error.message || '服务端错误',
+        error: safeErrorMessage(error, status),
       });
     }
   });
+}
+
+function resolveJwtSecret(value) {
+  const secret = String(value || '').trim();
+  if (secret && secret !== INSECURE_DEV_JWT_SECRET && secret !== PLACEHOLDER_JWT_SECRET) return secret;
+  if (process.env.VOICE_TO_WORD_ALLOW_INSECURE_JWT === '1') return INSECURE_DEV_JWT_SECRET;
+  throw new Error('请先在 .env 配置随机 JWT_SECRET，再启动大宜宾录音助手后端。');
+}
+
+function safeErrorMessage(error, status) {
+  if (status >= 500 && !error.publicMessage) return '服务端错误，请稍后重试或联系管理员。';
+  return error.publicMessage || error.message || '请求失败';
 }
 
 async function routeRequest(req, res, store, config) {
@@ -112,7 +143,7 @@ async function routeRequest(req, res, store, config) {
       version: '0.1.0',
       r2Configured: isR2Configured(runtimeConfig),
       dashscopeConfigured: isDashScopeConfigured(runtimeConfig),
-      llmConfigured: Boolean(runtimeConfig.easyAiApiKey || runtimeConfig.kimiApiKey),
+      llmConfigured: hasConfiguredLlmProvider(runtimeConfig, store),
       devFakeAsr: Boolean(runtimeConfig.devFakeAsr),
     });
     return;
@@ -156,9 +187,17 @@ async function routeRequest(req, res, store, config) {
     const freshEmployee = store.findById('employees', employee.id);
     sendJson(res, 200, {
       accessToken: signToken({ employeeId: employee.id }, runtimeConfig.jwtSecret),
-      refreshToken: signToken({ employeeId: employee.id, type: 'refresh' }, runtimeConfig.jwtSecret, 60 * 60 * 24 * 14),
       employee: serializeEmployee(freshEmployee, store),
     });
+    return;
+  }
+
+  const scopedDownloadMatch = pathname.match(/^\/api\/export-files\/([^/]+)\/download$/);
+  if (scopedDownloadMatch && req.method === 'GET' && url.searchParams.get('download_token')) {
+    const { employee, exportFile } = authenticateExportDownload(req, store, runtimeConfig, scopedDownloadMatch[1]);
+    const record = requireRecord(exportFile.audio_record_id, store);
+    ensureCanViewRecord(employee, record, store);
+    serveExportFileDownload(exportFile, runtimeConfig, res);
     return;
   }
 
@@ -193,7 +232,11 @@ async function routeRequest(req, res, store, config) {
   }
 
   if (req.method === 'POST' && pathname === '/api/me/avatar') {
-    const upload = await readMultipart(req);
+    const upload = await readMultipart(req, {
+      fileMode: 'memory',
+      maxBytes: MAX_AVATAR_UPLOAD_BYTES,
+      maxFileBytes: 2 * 1024 * 1024,
+    });
     const file = upload.files.avatar || upload.files.file;
     if (!file) throw httpError(400, '请上传头像文件');
     const avatar = await saveAvatar(file, auth.employee, store, runtimeConfig);
@@ -337,49 +380,60 @@ async function routeRequest(req, res, store, config) {
   if (uploadMatch && req.method === 'POST') {
     const record = requireRecord(uploadMatch[1], store);
     ensureCanEditRecord(auth.employee, record, store);
-    const upload = await readMultipart(req);
+    const upload = await readMultipart(req, {
+      fileMode: 'disk',
+      maxBytes: MAX_AUDIO_FILE_BYTES + MAX_MULTIPART_OVERHEAD_BYTES,
+      maxFileBytes: MAX_AUDIO_FILE_BYTES,
+      tempDir: path.join(config.uploadDir, 'tmp'),
+    });
     const file = upload.files.file;
-    if (!file) throw httpError(400, '请上传录音文件');
-    const ext = safeExtension(file.filename || '');
-    if (!SUPPORTED_EXTENSIONS.has(ext)) {
-      throw httpError(400, '暂不支持该文件格式');
+    try {
+      if (!file) throw httpError(400, '请上传录音文件');
+      const ext = safeExtension(file.filename || '');
+      if (!SUPPORTED_EXTENSIONS.has(ext)) {
+        throw httpError(400, '暂不支持该文件格式');
+      }
+      const fileSize = multipartFileSize(file);
+      if (fileSize > MAX_AUDIO_FILE_BYTES) {
+        throw httpError(413, '单个录音最大支持 2GB，请先切分后再上传。');
+      }
+      const candidateMeta = parseJsonObject(upload.fields.candidateMeta);
+      const durationSeconds = Number(upload.fields.durationSeconds || candidateMeta.durationSeconds || 0);
+      if (Number.isFinite(durationSeconds) && durationSeconds > MAX_AUDIO_SECONDS) {
+        throw httpError(400, '单个录音最长支持 12 小时，请先切分后再上传。');
+      }
+      fs.mkdirSync(config.uploadDir, { recursive: true });
+      const storedName = `${record.id}.${ext}`;
+      const storedPath = path.join(config.uploadDir, storedName);
+      moveMultipartFile(file, storedPath);
+      const uploadTitleUpdates = {};
+      if (!record.title_locked && (!record.title || record.title_source === 'filename')) {
+        uploadTitleUpdates.title = file.filename || storedName;
+        uploadTitleUpdates.title_source = 'filename';
+        uploadTitleUpdates.title_updated_at = new Date().toISOString();
+      }
+      const uploaded = store.update('audio_records', record.id, {
+        ...uploadTitleUpdates,
+        original_file_name: file.filename || storedName,
+        mime_type: file.contentType || '',
+        file_size: fileSize,
+        duration_seconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? Math.round(durationSeconds) : record.duration_seconds,
+        status: 'uploaded',
+        error_message: '',
+        processing_started_at: record.processing_started_at || new Date().toISOString(),
+        last_progress_at: new Date().toISOString(),
+        source_media_url_hash: upload.fields.candidateUrl ? sha256(upload.fields.candidateUrl) : record.source_media_url_hash,
+      });
+      addProcessingEvent(store, record.id, 'uploaded', '录音已上传，后台准备处理。', {
+        fileName: file.filename || storedName,
+        fileSize,
+      });
+      await enqueueRecordProcessing(uploaded, store, runtimeConfig);
+      sendJson(res, 200, { record: serializeRecord(store.findById('audio_records', record.id), store) });
+    } catch (error) {
+      cleanupMultipartUpload(upload);
+      throw error;
     }
-    if (file.buffer.length > MAX_AUDIO_FILE_BYTES) {
-      throw httpError(413, '单个录音最大支持 2GB，请先切分后再上传。');
-    }
-    const candidateMeta = parseJsonObject(upload.fields.candidateMeta);
-    const durationSeconds = Number(upload.fields.durationSeconds || candidateMeta.durationSeconds || 0);
-    if (Number.isFinite(durationSeconds) && durationSeconds > MAX_AUDIO_SECONDS) {
-      throw httpError(400, '单个录音最长支持 12 小时，请先切分后再上传。');
-    }
-    fs.mkdirSync(config.uploadDir, { recursive: true });
-    const storedName = `${record.id}.${ext}`;
-    const storedPath = path.join(config.uploadDir, storedName);
-    fs.writeFileSync(storedPath, file.buffer);
-    const uploadTitleUpdates = {};
-    if (!record.title_locked && (!record.title || record.title_source === 'filename')) {
-      uploadTitleUpdates.title = file.filename || storedName;
-      uploadTitleUpdates.title_source = 'filename';
-      uploadTitleUpdates.title_updated_at = new Date().toISOString();
-    }
-    const uploaded = store.update('audio_records', record.id, {
-      ...uploadTitleUpdates,
-      original_file_name: file.filename || storedName,
-      mime_type: file.contentType || '',
-      file_size: file.buffer.length,
-      duration_seconds: Number.isFinite(durationSeconds) && durationSeconds > 0 ? Math.round(durationSeconds) : record.duration_seconds,
-      status: 'uploaded',
-      error_message: '',
-      processing_started_at: record.processing_started_at || new Date().toISOString(),
-      last_progress_at: new Date().toISOString(),
-      source_media_url_hash: upload.fields.candidateUrl ? sha256(upload.fields.candidateUrl) : record.source_media_url_hash,
-    });
-    addProcessingEvent(store, record.id, 'uploaded', '录音已上传，后台准备处理。', {
-      fileName: file.filename || storedName,
-      fileSize: file.buffer.length,
-    });
-    await enqueueRecordProcessing(uploaded, store, runtimeConfig);
-    sendJson(res, 200, { record: serializeRecord(store.findById('audio_records', record.id), store) });
     return;
   }
 
@@ -481,6 +535,11 @@ async function routeRequest(req, res, store, config) {
     sendJson(res, 200, {
       export: exportFile,
       downloadUrl: `${runtimeConfig.publicBaseUrl}/api/export-files/${exportFile.id}/download`,
+      downloadToken: signToken({
+        employeeId: auth.employee.id,
+        exportFileId: exportFile.id,
+        type: 'export_download',
+      }, runtimeConfig.jwtSecret, 5 * 60),
     });
     return;
   }
@@ -491,20 +550,7 @@ async function routeRequest(req, res, store, config) {
     if (!exportFile) throw httpError(404, '导出文件不存在');
     const record = requireRecord(exportFile.audio_record_id, store);
     ensureCanViewRecord(auth.employee, record, store);
-    if (exportFile.storage === 'r2') {
-      res.writeHead(302, {
-        Location: presignR2Url(runtimeConfig, { method: 'GET', key: exportFile.r2_key, expiresIn: 900 }),
-      });
-      res.end();
-      return;
-    }
-    const filePath = path.join(runtimeConfig.exportDir, exportFile.r2_key);
-    if (!fs.existsSync(filePath)) throw httpError(404, '导出文件不存在');
-    res.writeHead(200, {
-      'Content-Type': contentTypeForExport(exportFile.format),
-      'Content-Disposition': `attachment; filename="${encodeURIComponent(path.basename(filePath))}"`,
-    });
-    fs.createReadStream(filePath).pipe(res);
+    serveExportFileDownload(exportFile, runtimeConfig, res);
     return;
   }
 
@@ -533,9 +579,110 @@ async function routeRequest(req, res, store, config) {
   if (pathname === '/api/admin/settings/test' && req.method === 'POST') {
     ensureCanManageSettings(auth.employee);
     const body = await readJson(req);
-    const result = await testSystemSettings(resolveRuntimeConfig(config, store), body.target || 'all');
+    const result = await testSystemSettings(resolveRuntimeConfig(config, store), body.target || 'all', store);
     addAudit(store, auth.employee.id, 'test_system_settings', 'system_settings', String(body.target || 'all'), { ok: result.ok });
     sendJson(res, 200, result);
+    return;
+  }
+
+  if (pathname === '/api/admin/llm-providers' && req.method === 'GET') {
+    ensureCanManageSettings(auth.employee);
+    sendJson(res, 200, {
+      providers: sortedLlmProviders(store).map(serializeLlmProvider),
+      presets: DEFAULT_LLM_PROVIDER_TEMPLATES.map(serializeLlmProviderPreset),
+    });
+    return;
+  }
+
+  if (pathname === '/api/admin/llm-providers/test' && req.method === 'POST') {
+    ensureCanManageSettings(auth.employee);
+    const body = await readJson(req);
+    const existing = body.id ? store.findById('llm_providers', body.id) : null;
+    const provider = normalizeLlmProviderInput(body, existing, auth.employee.id, { requireApiKey: true, forTest: true });
+    const result = await testLlmProviderSafe(providerForCall(provider));
+    if (existing) {
+      store.update('llm_providers', existing.id, {
+        last_test_status: result.ok ? 'passed' : 'failed',
+        last_test_message: result.message,
+        last_test_at: new Date().toISOString(),
+        updated_by: auth.employee.id,
+      });
+    }
+    addAudit(store, auth.employee.id, 'test_llm_provider', 'llm_provider', existing?.id || provider.provider_key, { ok: result.ok });
+    sendJson(res, 200, result);
+    return;
+  }
+
+  if (pathname === '/api/admin/llm-providers' && req.method === 'POST') {
+    ensureCanManageSettings(auth.employee);
+    const body = await readJson(req);
+    const provider = normalizeLlmProviderInput(body, null, auth.employee.id);
+    if (provider.enabled && !body.forceSaveWithoutTest) {
+      const result = await testLlmProviderSafe(providerForCall(provider));
+      if (!result.ok) throw httpError(400, result.message);
+      provider.last_test_status = 'passed';
+      provider.last_test_message = result.message;
+      provider.last_test_at = new Date().toISOString();
+    }
+    const created = store.insert('llm_providers', provider);
+    addAudit(store, auth.employee.id, 'create_llm_provider', 'llm_provider', created.id, {
+      providerKey: created.provider_key,
+      protocol: created.protocol,
+    });
+    sendJson(res, 201, { provider: serializeLlmProvider(created) });
+    return;
+  }
+
+  const llmProviderMatch = pathname.match(/^\/api\/admin\/llm-providers\/([^/]+)$/);
+  if (llmProviderMatch && req.method === 'PATCH') {
+    ensureCanManageSettings(auth.employee);
+    const existing = store.findById('llm_providers', llmProviderMatch[1]);
+    if (!existing) throw httpError(404, '模型不存在');
+    const body = await readJson(req);
+    const provider = normalizeLlmProviderInput(body, existing, auth.employee.id);
+    if (shouldRetestLlmProvider(body, existing, provider) && !body.forceSaveWithoutTest) {
+      const result = await testLlmProviderSafe(providerForCall(provider));
+      if (!result.ok) throw httpError(400, result.message);
+      provider.last_test_status = 'passed';
+      provider.last_test_message = result.message;
+      provider.last_test_at = new Date().toISOString();
+    }
+    const updated = store.update('llm_providers', existing.id, provider);
+    addAudit(store, auth.employee.id, 'update_llm_provider', 'llm_provider', updated.id, {
+      providerKey: updated.provider_key,
+      enabled: updated.enabled,
+    });
+    sendJson(res, 200, { provider: serializeLlmProvider(updated) });
+    return;
+  }
+
+  if (pathname === '/api/admin/llm-providers/reorder' && req.method === 'POST') {
+    ensureCanManageSettings(auth.employee);
+    const body = await readJson(req);
+    const ids = Array.isArray(body.ids) ? body.ids : [];
+    if (!ids.length) throw httpError(400, '请提供模型排序');
+    ids.forEach((id, index) => {
+      if (store.findById('llm_providers', id)) {
+        store.update('llm_providers', id, {
+          priority: (index + 1) * 10,
+          updated_by: auth.employee.id,
+        });
+      }
+    });
+    addAudit(store, auth.employee.id, 'reorder_llm_providers', 'llm_provider', 'priority', { ids });
+    sendJson(res, 200, { providers: sortedLlmProviders(store).map(serializeLlmProvider) });
+    return;
+  }
+
+  if (llmProviderMatch && req.method === 'DELETE') {
+    ensureCanManageSettings(auth.employee);
+    const existing = store.findById('llm_providers', llmProviderMatch[1]);
+    if (!existing) throw httpError(404, '模型不存在');
+    store.delete('llm_providers', existing.id);
+    addAudit(store, auth.employee.id, 'delete_llm_provider', 'llm_provider', existing.id, {
+      providerKey: existing.provider_key,
+    });
+    sendJson(res, 200, { ok: true });
     return;
   }
 
@@ -616,12 +763,31 @@ async function routeRequest(req, res, store, config) {
 function authenticate(req, store, config) {
   const header = req.headers.authorization || '';
   const url = new URL(req.url, 'http://localhost');
-  const token = header.startsWith('Bearer ') ? header.slice(7) : (url.searchParams.get('access_token') || '');
+  const token = header.startsWith('Bearer ')
+    ? header.slice(7)
+    : (allowsQueryAccessToken(req, url) ? url.searchParams.get('access_token') || '' : '');
   const payload = verifyToken(token, config.jwtSecret);
   if (!payload?.employeeId) throw httpError(401, '请先登录');
   const employee = store.findById('employees', payload.employeeId);
   if (!employee || employee.status !== 'active') throw httpError(401, '账号不可用，请重新登录');
   return { employee };
+}
+
+function allowsQueryAccessToken(req, url) {
+  return ['GET', 'HEAD'].includes(req.method) && /^\/api\/records\/[^/]+\/audio$/.test(url.pathname);
+}
+
+function authenticateExportDownload(req, store, config, exportFileId) {
+  const url = new URL(req.url, 'http://localhost');
+  const payload = verifyToken(url.searchParams.get('download_token') || '', config.jwtSecret);
+  if (payload?.type !== 'export_download' || payload.exportFileId !== exportFileId || !payload.employeeId) {
+    throw httpError(401, '下载链接已过期，请重新导出。');
+  }
+  const employee = store.findById('employees', payload.employeeId);
+  if (!employee || employee.status !== 'active') throw httpError(401, '账号不可用，请重新登录');
+  const exportFile = store.findById('export_files', exportFileId);
+  if (!exportFile) throw httpError(404, '导出文件不存在');
+  return { employee, exportFile };
 }
 
 function serializeEmployee(employee, store) {
@@ -993,9 +1159,12 @@ async function processUploadedRecord(record, store, config) {
   let storageKey = record.r2_key;
   if (isR2Configured(config)) {
     storageKey = storageKey || `audio/${new Date().toISOString().slice(0, 10)}/${record.id}/${record.original_file_name || `${record.id}.mp3`}`;
-    const buffer = fs.existsSync(localPath) ? fs.readFileSync(localPath) : Buffer.alloc(0);
+    const stat = fs.existsSync(localPath) ? fs.statSync(localPath) : { size: 0 };
+    const body = fs.existsSync(localPath) ? fs.createReadStream(localPath) : Buffer.alloc(0);
     addProcessingEvent(store, record.id, 'uploaded', '正在上传录音到 R2 存储。', { storageKey });
-    await putR2Object(config, storageKey, buffer, record.mime_type || 'application/octet-stream');
+    await putR2Object(config, storageKey, body, record.mime_type || 'application/octet-stream', undefined, {
+      contentLength: stat.size,
+    });
     current = store.update('audio_records', record.id, {
       r2_key: storageKey,
       status: 'uploaded',
@@ -1121,7 +1290,7 @@ async function summarizeExistingRecord(record, store, config) {
   const transcriptText = transcript?.corrected_text || transcript?.raw_text || '';
   const owner = store.findById('employees', record.owner_employee_id);
   const profileContext = buildEmployeeProfileContext(owner, store);
-  const summary = await generateSummary(config, record, transcriptText, { profileContext });
+  const summary = await generateSummary(config, record, transcriptText, { profileContext, store });
   upsertByAudioRecord(store, 'summaries', record.id, {
     audio_record_id: record.id,
     template_type: record.template_type,
@@ -1555,6 +1724,23 @@ function serveRecordAudio(req, res, record, config) {
   fs.createReadStream(localPath, { start, end }).pipe(res);
 }
 
+function serveExportFileDownload(exportFile, config, res) {
+  if (exportFile.storage === 'r2') {
+    res.writeHead(302, {
+      Location: presignR2Url(config, { method: 'GET', key: exportFile.r2_key, expiresIn: 900 }),
+    });
+    res.end();
+    return;
+  }
+  const filePath = path.join(config.exportDir, exportFile.r2_key);
+  if (!fs.existsSync(filePath)) throw httpError(404, '导出文件不存在');
+  res.writeHead(200, {
+    'Content-Type': contentTypeForExport(exportFile.format),
+    'Content-Disposition': `attachment; filename="${encodeURIComponent(path.basename(filePath))}"`,
+  });
+  fs.createReadStream(filePath).pipe(res);
+}
+
 function contentTypeForAudio(ext) {
   if (ext === 'mp3') return 'audio/mpeg';
   if (ext === 'm4a') return 'audio/mp4';
@@ -1576,9 +1762,9 @@ function playableAudioContentType(mimeType, ext) {
   return mimeType;
 }
 
-async function testSystemSettings(config, target) {
-  const targets = target === 'all' ? ['publicBaseUrl', 'dashscope', 'r2', 'easyai', 'kimi'] : [target];
-  const checks = targets.map((item) => checkSystemSettingTarget(config, item));
+async function testSystemSettings(config, target, store = null) {
+  const targets = target === 'all' ? ['publicBaseUrl', 'dashscope', 'r2', 'llm'] : [target];
+  const checks = targets.map((item) => checkSystemSettingTarget(config, item, store));
   const ok = checks.every((item) => item.ok);
   return {
     ok,
@@ -1588,7 +1774,7 @@ async function testSystemSettings(config, target) {
   };
 }
 
-function checkSystemSettingTarget(config, target) {
+function checkSystemSettingTarget(config, target, store) {
   if (target === 'publicBaseUrl') {
     try {
       new URL(config.publicBaseUrl);
@@ -1602,6 +1788,13 @@ function checkSystemSettingTarget(config, target) {
   }
   if (target === 'r2') {
     return requiredSettingCheck(target, config, ['r2AccountId', 'r2AccessKeyId', 'r2SecretAccessKey', 'r2Bucket']);
+  }
+  if (target === 'llm') {
+    return {
+      target,
+      ok: hasConfiguredLlmProvider(config, store),
+      message: hasConfiguredLlmProvider(config, store) ? '至少一个总结模型可用' : '尚未启用可用总结模型',
+    };
   }
   if (target === 'easyai') {
     return requiredSettingCheck(target, config, ['easyAiBaseUrl', 'easyAiApiKey', 'easyAiModel']);
@@ -1619,6 +1812,171 @@ function requiredSettingCheck(target, config, keys) {
     ok: missing.length === 0,
     message: missing.length ? `缺少配置：${missing.join(', ')}` : '必要配置已填写',
   };
+}
+
+function sortedLlmProviders(store) {
+  return store.table('llm_providers')
+    .slice()
+    .sort((left, right) => Number(left.priority || 100) - Number(right.priority || 100) ||
+      String(left.display_name || '').localeCompare(String(right.display_name || '')));
+}
+
+function normalizeLlmProviderInput(body, existing, actorEmployeeId, options = {}) {
+  const protocol = providerValue(body, existing, 'protocol').trim();
+  const requestModel = providerValue(body, existing, 'requestModel', 'request_model').trim();
+  const providerKey = providerValue(body, existing, 'providerKey', 'provider_key').trim();
+  const clearApiKey = Boolean(body.clearApiKey || body.clear_api_key);
+  const rawApiKey = body.apiKey ?? body.api_key;
+  const apiKey = clearApiKey
+    ? ''
+    : rawApiKey === undefined || String(rawApiKey).trim() === ''
+      ? existing?.api_key || ''
+      : String(rawApiKey).trim();
+  const enabled = booleanProviderValue(body, existing, 'enabled', false);
+  const timeoutMs = numberProviderValue(body, existing, 'timeoutMs', 'timeout_ms', 120000);
+  const priority = numberProviderValue(body, existing, 'priority', 'priority', nextLlmProviderPriority(existing));
+  const reasoningEffort = normalizeReasoningEffort(providerValue(body, existing, 'reasoningEffort', 'reasoning_effort'));
+  const endpointPath = providerValue(body, existing, 'endpointPath', 'endpoint_path') ||
+    defaultEndpointPath(protocol, requestModel);
+  const provider = {
+    ...(existing || {}),
+    display_name: providerValue(body, existing, 'displayName', 'display_name').trim(),
+    provider_key: providerKey,
+    channel_id: providerValue(body, existing, 'channelId', 'channel_id').trim() || providerKey,
+    protocol,
+    base_url: normalizeProviderBaseUrl(providerValue(body, existing, 'baseUrl', 'base_url')),
+    endpoint_path: normalizeEndpointPath(endpointPath),
+    api_key: apiKey,
+    request_model: requestModel,
+    priority,
+    enabled,
+    allow_fallback: booleanProviderValue(body, existing, 'allowFallback', true, 'allow_fallback'),
+    timeout_ms: timeoutMs,
+    reasoning_effort: protocol === 'openai-responses' ? reasoningEffort : '',
+    supports_json: true,
+    supports_files: false,
+    updated_by: actorEmployeeId || null,
+  };
+
+  if (!existing) {
+    provider.created_by = actorEmployeeId || null;
+    provider.last_test_status = '';
+    provider.last_test_message = '';
+    provider.last_test_at = '';
+    provider.last_call_status = '';
+    provider.last_call_message = '';
+    provider.last_call_at = '';
+  }
+
+  validateLlmProvider(provider, options);
+  return provider;
+}
+
+function providerValue(body, existing, camelKey, snakeKey = camelKey) {
+  if (Object.prototype.hasOwnProperty.call(body, camelKey)) return String(body[camelKey] ?? '');
+  if (Object.prototype.hasOwnProperty.call(body, snakeKey)) return String(body[snakeKey] ?? '');
+  return String(existing?.[snakeKey] ?? existing?.[camelKey] ?? '');
+}
+
+function booleanProviderValue(body, existing, camelKey, defaultValue, snakeKey = camelKey) {
+  const raw = Object.prototype.hasOwnProperty.call(body, camelKey)
+    ? body[camelKey]
+    : Object.prototype.hasOwnProperty.call(body, snakeKey)
+      ? body[snakeKey]
+      : existing?.[snakeKey] ?? existing?.[camelKey] ?? defaultValue;
+  if (typeof raw === 'boolean') return raw;
+  return ['1', 'true', 'yes', 'on'].includes(String(raw).toLowerCase());
+}
+
+function numberProviderValue(body, existing, camelKey, snakeKey, defaultValue) {
+  const raw = Object.prototype.hasOwnProperty.call(body, camelKey)
+    ? body[camelKey]
+    : Object.prototype.hasOwnProperty.call(body, snakeKey)
+      ? body[snakeKey]
+      : existing?.[snakeKey] ?? existing?.[camelKey] ?? defaultValue;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : defaultValue;
+}
+
+function nextLlmProviderPriority(existing) {
+  return existing?.priority || 100;
+}
+
+function validateLlmProvider(provider, options = {}) {
+  if (!provider.display_name || provider.display_name.length > 80) throw httpError(400, '模型名称需为 1 到 80 字');
+  if (!/^[a-z0-9_-]+$/i.test(provider.provider_key)) throw httpError(400, 'Provider 标识只能包含字母、数字、短横线和下划线');
+  if (!provider.channel_id || provider.channel_id.length > 80) throw httpError(400, '请填写通道标识');
+  if (!SUPPORTED_PROTOCOLS.has(provider.protocol)) throw httpError(400, '暂不支持该协议类型');
+  if (!provider.base_url) throw httpError(400, '请填写 Base URL');
+  validateProviderBaseUrl(provider.base_url);
+  if (!provider.request_model) throw httpError(400, '请填写 Model');
+  if ((provider.enabled || options.requireApiKey || options.forTest) && !provider.api_key) throw httpError(400, '请填写 API Key');
+  if (provider.enabled && !GENERATION_PROTOCOLS.has(provider.protocol)) throw httpError(400, '该协议为二期适配项，暂不能启用');
+  if (provider.timeout_ms < 10000 || provider.timeout_ms > 300000) throw httpError(400, '超时时间需在 10000 到 300000 毫秒之间');
+}
+
+function normalizeProviderBaseUrl(value) {
+  return String(value || '').trim().replace(/\/+$/, '');
+}
+
+function normalizeEndpointPath(value) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+}
+
+function normalizeReasoningEffort(value) {
+  const effort = String(value || 'high').trim().toLowerCase();
+  return ['low', 'medium', 'high', 'xhigh'].includes(effort) ? effort : 'high';
+}
+
+function defaultEndpointPath(protocol, requestModel) {
+  if (protocol === 'openai-responses') return '/responses';
+  if (protocol === 'openai-chat') return '/chat/completions';
+  if (protocol === 'anthropic-messages') return '/v1/messages';
+  if (protocol === 'gemini-native') return `/v1beta/models/${requestModel || 'gemini'}:generateContent`;
+  return '';
+}
+
+function validateProviderBaseUrl(value) {
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw httpError(400, 'Base URL 格式不正确');
+  }
+  if (parsed.protocol === 'https:') return;
+  if (parsed.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(parsed.hostname)) return;
+  throw httpError(400, 'Base URL 仅允许 https，或后端本机的 127.0.0.1/localhost');
+}
+
+function shouldRetestLlmProvider(body, existing, provider) {
+  if (!provider.enabled) return false;
+  if (existing.enabled !== true) return true;
+  return ['apiKey', 'api_key', 'baseUrl', 'base_url', 'protocol', 'requestModel', 'request_model', 'endpointPath', 'endpoint_path']
+    .some((key) => Object.prototype.hasOwnProperty.call(body, key));
+}
+
+async function testLlmProviderSafe(provider) {
+  if (!GENERATION_PROTOCOLS.has(provider.protocol)) {
+    return { ok: false, message: `协议 ${provider.protocol} 暂未接入测试链路` };
+  }
+  try {
+    return await testLlmProviderConnection(provider);
+  } catch (error) {
+    return {
+      ok: false,
+      message: `模型测试失败：${safeUpstreamMessage(error, provider)}`,
+      provider: provider.channelId || provider.providerKey || '',
+      requestModel: provider.requestModel || '',
+    };
+  }
+}
+
+function safeUpstreamMessage(error, provider) {
+  let message = String(error?.message || error || '请求失败');
+  if (provider.apiKey) message = message.split(String(provider.apiKey)).join('[secret]');
+  return message.replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/g, 'Bearer [secret]').slice(0, 300);
 }
 
 function createEmployee(body, store) {
@@ -1719,7 +2077,7 @@ function requireEmployee(id, store) {
 }
 
 function readJson(req, allowEmpty = false) {
-  return readBody(req).then((buffer) => {
+  return readBody(req, { maxBytes: MAX_JSON_BODY_BYTES }).then((buffer) => {
     if (allowEmpty && buffer.length === 0) return {};
     if (buffer.length === 0) throw httpError(400, '请求体不能为空');
     return JSON.parse(buffer.toString('utf8'));
@@ -1736,48 +2094,181 @@ function parseJsonObject(value) {
   }
 }
 
-function readBody(req) {
+function readBody(req, options = {}) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on('data', (chunk) => chunks.push(chunk));
+    const maxBytes = Number(options.maxBytes || 0);
+    const declared = requestContentLength(req);
+    let total = 0;
+    if (maxBytes && declared > maxBytes) {
+      reject(httpError(413, options.limitMessage || '请求体过大'));
+      req.destroy();
+      return;
+    }
+    req.on('data', (chunk) => {
+      total += chunk.length;
+      if (maxBytes && total > maxBytes) {
+        reject(httpError(413, options.limitMessage || '请求体过大'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
 }
 
-async function readMultipart(req) {
+async function readMultipart(req, options = {}) {
   const contentType = req.headers['content-type'] || '';
   const boundaryMatch = contentType.match(/boundary=([^;]+)/);
   if (!boundaryMatch) throw httpError(400, '上传格式不正确');
-  const boundary = `--${boundaryMatch[1]}`;
-  const body = (await readBody(req)).toString('latin1');
-  const parts = body.split(boundary).slice(1, -1);
+  const boundaryValue = String(boundaryMatch[1]).replace(/^"|"$/g, '');
+  const firstBoundary = Buffer.from(`--${boundaryValue}`);
+  const partBoundary = Buffer.from(`\r\n--${boundaryValue}`);
+  const maxBytes = Number(options.maxBytes || 0);
+  const maxFileBytes = Number(options.maxFileBytes || 0);
+  const declared = requestContentLength(req);
+  if (maxBytes && declared > maxBytes) throw httpError(413, '上传文件超过限制，请先切分后再上传。');
+
   const fields = {};
   const files = {};
-  for (const part of parts) {
-    const clean = part.replace(/^\r\n/, '').replace(/\r\n$/, '');
-    const separatorIndex = clean.indexOf('\r\n\r\n');
-    if (separatorIndex === -1) continue;
-    const rawHeaders = clean.slice(0, separatorIndex);
-    let rawContent = clean.slice(separatorIndex + 4);
-    if (rawContent.endsWith('\r\n')) rawContent = rawContent.slice(0, -2);
-    const dispositionLine = rawHeaders.split(/\r?\n/).find((line) => line.toLowerCase().startsWith('content-disposition:'));
-    if (!dispositionLine) continue;
-    const name = dispositionLine.match(/(?:^|;\s*)name="([^"]+)"/)?.[1];
-    const filename = dispositionLine.match(/(?:^|;\s*)filename="([^"]*)"/)?.[1];
-    if (!name) continue;
-    const contentTypeMatch = rawHeaders.match(/content-type:\s*([^\r\n]+)/i);
-    if (filename) {
-      files[name] = {
-        filename: path.basename(decodeMultipartHeaderValue(filename)),
-        contentType: contentTypeMatch?.[1] || '',
-        buffer: Buffer.from(rawContent, 'latin1'),
-      };
-    } else {
-      fields[name] = Buffer.from(rawContent, 'latin1').toString('utf8');
+  const tempFiles = [];
+  const tailBytes = partBoundary.length + 8;
+  let buffer = Buffer.alloc(0);
+  let total = 0;
+  let state = 'preamble';
+  let currentPart = null;
+  let finished = false;
+
+  try {
+    for await (const chunk of req) {
+      total += chunk.length;
+      if (maxBytes && total > maxBytes) throw httpError(413, '上传文件超过限制，请先切分后再上传。');
+      buffer = buffer.length ? Buffer.concat([buffer, chunk]) : chunk;
+      consumeAvailableMultipart();
+    }
+    consumeAvailableMultipart(true);
+    if (!finished) throw httpError(400, '上传格式不完整');
+    return { fields, files };
+  } catch (error) {
+    cleanupFiles(tempFiles);
+    throw error;
+  }
+
+  function consumeAvailableMultipart(final = false) {
+    while (!finished) {
+      if (state === 'preamble') {
+        const index = buffer.indexOf(firstBoundary);
+        if (index === -1) {
+          if (final) throw httpError(400, '上传格式不正确');
+          if (buffer.length > firstBoundary.length) buffer = buffer.slice(buffer.length - firstBoundary.length);
+          return;
+        }
+        buffer = buffer.slice(index + firstBoundary.length);
+        state = 'after-boundary';
+      }
+
+      if (state === 'after-boundary') {
+        if (buffer.length < 2) return;
+        const marker = buffer.slice(0, 2).toString('latin1');
+        if (marker === '--') {
+          finished = true;
+          buffer = buffer.slice(2);
+          return;
+        }
+        if (marker !== '\r\n') throw httpError(400, '上传格式不正确');
+        buffer = buffer.slice(2);
+        state = 'headers';
+      }
+
+      if (state === 'headers') {
+        const separatorIndex = buffer.indexOf('\r\n\r\n');
+        if (separatorIndex === -1) {
+          if (final) throw httpError(400, '上传格式不完整');
+          return;
+        }
+        currentPart = parseMultipartPartHeaders(buffer.slice(0, separatorIndex).toString('latin1'));
+        buffer = buffer.slice(separatorIndex + 4);
+        state = 'body';
+      }
+
+      if (state === 'body') {
+        const boundaryIndex = buffer.indexOf(partBoundary);
+        if (boundaryIndex !== -1) {
+          writeMultipartPartData(buffer.slice(0, boundaryIndex));
+          finalizeMultipartPart();
+          buffer = buffer.slice(boundaryIndex + partBoundary.length);
+          state = 'after-boundary';
+          continue;
+        }
+        if (final) throw httpError(400, '上传格式不完整');
+        const safeLength = Math.max(0, buffer.length - tailBytes);
+        if (!safeLength) return;
+        writeMultipartPartData(buffer.slice(0, safeLength));
+        buffer = buffer.slice(safeLength);
+        return;
+      }
     }
   }
-  return { fields, files };
+
+  function parseMultipartPartHeaders(rawHeaders) {
+    const dispositionLine = rawHeaders.split(/\r?\n/).find((line) => line.toLowerCase().startsWith('content-disposition:'));
+    if (!dispositionLine) return { skip: true };
+    const name = dispositionLine.match(/(?:^|;\s*)name="([^"]+)"/)?.[1];
+    if (!name) return { skip: true };
+    const filenameMatch = dispositionLine.match(/(?:^|;\s*)filename="([^"]*)"/);
+    const contentTypeMatch = rawHeaders.match(/content-type:\s*([^\r\n]+)/i);
+    if (filenameMatch?.[1]) {
+      const file = {
+        filename: path.basename(decodeMultipartHeaderValue(filenameMatch[1])),
+        contentType: contentTypeMatch?.[1] || '',
+        size: 0,
+      };
+      if (options.fileMode === 'disk') {
+        const tempDir = options.tempDir || path.join(process.cwd(), 'uploads', 'tmp');
+        fs.mkdirSync(tempDir, { recursive: true });
+        file.path = path.join(tempDir, `${Date.now()}-${crypto.randomUUID()}.part`);
+        tempFiles.push(file.path);
+      } else {
+        file.bufferParts = [];
+      }
+      files[name] = file;
+      return { name, file };
+    }
+    return { name, fieldParts: [], fieldBytes: 0 };
+  }
+
+  function writeMultipartPartData(data) {
+    if (!currentPart || currentPart.skip || !data.length) return;
+    if (currentPart.file) {
+      currentPart.file.size += data.length;
+      if (maxFileBytes && currentPart.file.size > maxFileBytes) throw httpError(413, '上传文件超过限制，请先切分后再上传。');
+      if (currentPart.file.path) fs.appendFileSync(currentPart.file.path, data);
+      else currentPart.file.bufferParts.push(data);
+      return;
+    }
+    currentPart.fieldBytes += data.length;
+    if (currentPart.fieldBytes > MAX_MULTIPART_FIELD_BYTES) throw httpError(400, '上传字段过长');
+    currentPart.fieldParts.push(data);
+  }
+
+  function finalizeMultipartPart() {
+    if (!currentPart || currentPart.skip) {
+      currentPart = null;
+      return;
+    }
+    if (currentPart.file) {
+      if (!currentPart.file.path) {
+        currentPart.file.buffer = Buffer.concat(currentPart.file.bufferParts);
+        delete currentPart.file.bufferParts;
+      }
+      currentPart = null;
+      return;
+    }
+    fields[currentPart.name] = Buffer.concat(currentPart.fieldParts).toString('utf8');
+    currentPart = null;
+  }
 }
 
 function decodeMultipartHeaderValue(value) {
@@ -1785,6 +2276,40 @@ function decodeMultipartHeaderValue(value) {
     return Buffer.from(String(value || ''), 'latin1').toString('utf8');
   } catch {
     return String(value || '');
+  }
+}
+
+function requestContentLength(req) {
+  const value = Number(req.headers['content-length'] || 0);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function multipartFileSize(file) {
+  if (Number.isFinite(file?.size)) return file.size;
+  if (file?.buffer) return file.buffer.length;
+  return 0;
+}
+
+function moveMultipartFile(file, targetPath) {
+  if (file.path) {
+    fs.renameSync(file.path, targetPath);
+    return;
+  }
+  fs.writeFileSync(targetPath, file.buffer || Buffer.alloc(0));
+}
+
+function cleanupMultipartUpload(upload) {
+  const files = Object.values(upload?.files || {});
+  cleanupFiles(files.map((file) => file.path).filter(Boolean));
+}
+
+function cleanupFiles(filePaths) {
+  for (const filePath of filePaths) {
+    try {
+      if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch {
+      // Best-effort cleanup only.
+    }
   }
 }
 
@@ -1810,10 +2335,14 @@ function serveWebAsset(pathname, method, res) {
   return true;
 }
 
-function setCorsHeaders(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+function setCorsHeaders(req, res, config) {
+  const origin = allowedCorsOrigin(req.headers.origin, config);
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+  }
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization,Range');
 }
 
 function httpError(statusCode, message) {
@@ -1821,6 +2350,31 @@ function httpError(statusCode, message) {
   error.statusCode = statusCode;
   error.publicMessage = message;
   return error;
+}
+
+function allowedCorsOrigin(origin, config) {
+  if (!origin) return '';
+  if (String(origin).startsWith('chrome-extension://')) return origin;
+  const allowed = new Set([
+    originFromUrl(config.publicBaseUrl),
+    'http://localhost:8127',
+    'http://127.0.0.1:8127',
+  ].filter(Boolean));
+  for (const item of String(config.allowedOrigins || '').split(',')) {
+    const normalized = item.trim().replace(/\/$/, '');
+    if (normalized) allowed.add(normalized);
+  }
+  const normalizedOrigin = String(origin).replace(/\/$/, '');
+  if (allowed.has('*')) return '*';
+  return allowed.has(normalizedOrigin) ? origin : '';
+}
+
+function originFromUrl(value) {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return '';
+  }
 }
 
 function sha256(value) {
