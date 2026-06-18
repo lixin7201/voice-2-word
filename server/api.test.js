@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { createVoiceServer } = require('./app');
 const { createInitialData } = require('./lib/seed');
+const { mediaUrlFingerprint, rawMediaUrlFingerprint } = require('./lib/media-fingerprint');
 
 function startTestServer(options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-2-word-'));
@@ -204,6 +205,83 @@ async function waitFor(condition, timeoutMs = 1000) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   assert.fail('等待条件超时');
+}
+
+function completedRecord(id, employee, departmentId, now) {
+  return {
+    id,
+    owner_employee_id: employee.id,
+    owner_department_id: departmentId,
+    title: '已识别网页录音',
+    title_source: 'manual',
+    title_locked: true,
+    ai_title: '',
+    title_updated_at: now,
+    source_type: 'web_capture',
+    source_page_url: 'https://a.com/detail',
+    source_page_title: '网页录音',
+    source_media_url_hash: '',
+    original_file_name: 'record.mp3',
+    mime_type: 'audio/mpeg',
+    file_size: 123456,
+    duration_seconds: 360,
+    r2_key: 'record.mp3',
+    status: 'completed',
+    template_type: 'meeting_minutes',
+    followup_type: 'none',
+    processing_started_at: now,
+    transcribe_started_at: now,
+    summarize_started_at: now,
+    last_progress_at: now,
+    asr_task_id: '',
+    processing_attempts: 1,
+    completed_at: now,
+    error_message: '',
+    archived_at: '',
+    archived_by: '',
+    deleted_at: '',
+    deleted_by: '',
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+function addTranscriptAndSummary(data, recordId, now) {
+  data.transcripts.push({
+    id: `transcript-${recordId}`,
+    audio_record_id: recordId,
+    asr_provider: 'local-dev',
+    asr_task_id: '',
+    raw_text: '这是一条已经识别过的网页录音。',
+    corrected_text: '这是一条已经识别过的网页录音。',
+    segments_json: [],
+    speaker_aliases_json: {},
+    duration_ms: 360000,
+    cost_cny: 0,
+    created_at: now,
+    updated_at: now,
+  });
+  data.summaries.push({
+    id: `summary-${recordId}`,
+    audio_record_id: recordId,
+    template_type: 'meeting_minutes',
+    summary_markdown: '已生成总结',
+    overview_card_json: {},
+    mind_map_json: {},
+    structured_json: {},
+    model_provider: 'local-dev',
+    model_name: 'local-template',
+    model_error: '',
+    quality_status: 'ai_ok',
+    quality_reason: '',
+    input_transcript_chars: 15,
+    summary_chars: 5,
+    placeholder_count: 0,
+    provider_errors_json: [],
+    version: 1,
+    created_at: now,
+    updated_at: now,
+  });
 }
 
 test('seeded users log in with expected roles and departments', async () => {
@@ -672,6 +750,152 @@ test('manual upload creates completed local-development record and export', asyn
   }
 });
 
+test('web capture duplicate check only returns the current user own records', async () => {
+  const now = new Date().toISOString();
+  const data = createInitialData(now);
+  const lanlan = data.employees.find((employee) => employee.display_name === '岚岚');
+  const coco = data.employees.find((employee) => employee.display_name === 'Coco');
+  const lanlanMembership = data.employee_departments.find((item) => item.employee_id === lanlan.id);
+  const cocoMembership = data.employee_departments.find((item) => item.employee_id === coco.id);
+  data.audio_records.push({
+    ...completedRecord('rec-duplicate-lanlan', lanlan, lanlanMembership.department_id, now),
+    title: '岚岚已识别录音',
+    source_media_url_hash: mediaUrlFingerprint('https://a.com/audio?id=1&token=old'),
+    archived_at: now,
+  });
+  addTranscriptAndSummary(data, 'rec-duplicate-lanlan', now);
+  data.audio_records.push({
+    ...completedRecord('rec-duplicate-coco', coco, cocoMembership.department_id, now),
+    title: 'Coco 已识别录音',
+    source_media_url_hash: mediaUrlFingerprint('https://a.com/audio?id=2&token=old'),
+  });
+  addTranscriptAndSummary(data, 'rec-duplicate-coco', now);
+
+  const { server, baseUrl } = await startTestServer({ initialData: data });
+  try {
+    const lanlanLogin = await login(baseUrl, '岚岚');
+    const own = await request(baseUrl, '/api/records/check-duplicate', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlanLogin.accessToken}` },
+      body: JSON.stringify({
+        candidateUrl: 'https://a.com/audio?token=new&id=1',
+        sourcePageUrl: 'https://a.com/detail/1',
+      }),
+    });
+    assert.equal(own.response.status, 200);
+    assert.equal(own.body.duplicate, true);
+    assert.equal(own.body.record.id, 'rec-duplicate-lanlan');
+    assert.equal(own.body.record.hasTranscript, true);
+    assert.equal(own.body.record.hasSummary, true);
+
+    const otherUserRecord = await request(baseUrl, '/api/records/check-duplicate', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlanLogin.accessToken}` },
+      body: JSON.stringify({ candidateUrl: 'https://a.com/audio?id=2&token=new' }),
+    });
+    assert.equal(otherUserRecord.body.duplicate, false);
+  } finally {
+    server.close();
+  }
+});
+
+test('web capture duplicate check ignores deleted records and matches legacy raw hashes', async () => {
+  const now = new Date().toISOString();
+  const data = createInitialData(now);
+  const lanlan = data.employees.find((employee) => employee.display_name === '岚岚');
+  const membership = data.employee_departments.find((item) => item.employee_id === lanlan.id);
+  data.audio_records.push({
+    ...completedRecord('rec-deleted-duplicate', lanlan, membership.department_id, now),
+    source_media_url_hash: mediaUrlFingerprint('https://a.com/audio?id=deleted&token=old'),
+    deleted_at: now,
+  });
+  data.audio_records.push({
+    ...completedRecord('rec-legacy-duplicate', lanlan, membership.department_id, now),
+    source_media_url_hash: rawMediaUrlFingerprint('https://a.com/audio?id=legacy&token=old'),
+  });
+
+  const { server, baseUrl } = await startTestServer({ initialData: data });
+  try {
+    const loginBody = await login(baseUrl, '岚岚');
+    const deleted = await request(baseUrl, '/api/records/check-duplicate', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${loginBody.accessToken}` },
+      body: JSON.stringify({ candidateUrl: 'https://a.com/audio?id=deleted&token=new' }),
+    });
+    assert.equal(deleted.body.duplicate, false);
+
+    const legacy = await request(baseUrl, '/api/records/check-duplicate', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${loginBody.accessToken}` },
+      body: JSON.stringify({ candidateUrl: 'https://a.com/audio?id=legacy&token=old' }),
+    });
+    assert.equal(legacy.body.duplicate, true);
+    assert.equal(legacy.body.record.id, 'rec-legacy-duplicate');
+  } finally {
+    server.close();
+  }
+});
+
+test('web capture record creation blocks duplicates unless forced', async () => {
+  const now = new Date().toISOString();
+  const data = createInitialData(now);
+  const lanlan = data.employees.find((employee) => employee.display_name === '岚岚');
+  const membership = data.employee_departments.find((item) => item.employee_id === lanlan.id);
+  data.audio_records.push({
+    ...completedRecord('rec-create-duplicate', lanlan, membership.department_id, now),
+    source_media_url_hash: mediaUrlFingerprint('https://a.com/audio?id=42&token=old'),
+  });
+
+  const { server, baseUrl } = await startTestServer({ initialData: data });
+  try {
+    const loginBody = await login(baseUrl, '岚岚');
+    const duplicate = await request(baseUrl, '/api/records', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${loginBody.accessToken}` },
+      body: JSON.stringify({
+        sourceType: 'web_capture',
+        title: '重复网页录音',
+        templateType: 'meeting_minutes',
+        followupType: 'none',
+        candidateUrl: 'https://a.com/audio?token=new&id=42',
+      }),
+    });
+    assert.equal(duplicate.response.status, 409);
+    assert.equal(duplicate.body.duplicate, true);
+    assert.equal(duplicate.body.record.id, 'rec-create-duplicate');
+
+    const forced = await request(baseUrl, '/api/records', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${loginBody.accessToken}` },
+      body: JSON.stringify({
+        sourceType: 'web_capture',
+        title: '仍要重新识别',
+        templateType: 'meeting_minutes',
+        followupType: 'none',
+        candidateUrl: 'https://a.com/audio?token=new&id=42',
+        forceDuplicate: true,
+      }),
+    });
+    assert.equal(forced.response.status, 201);
+    assert.equal(forced.body.record.title, '仍要重新识别');
+
+    const manual = await request(baseUrl, '/api/records', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${loginBody.accessToken}` },
+      body: JSON.stringify({
+        sourceType: 'manual_upload',
+        title: '手动上传不查重',
+        templateType: 'meeting_minutes',
+        followupType: 'none',
+        candidateUrl: 'https://a.com/audio?token=new&id=42',
+      }),
+    });
+    assert.equal(manual.response.status, 201);
+  } finally {
+    server.close();
+  }
+});
+
 test('R2 uploads use safe object keys for special original file names', async () => {
   const r2 = await startR2UploadServer();
   const { server, baseUrl } = await startTestServer({
@@ -1096,6 +1320,68 @@ test('summarize endpoint returns while the LLM job continues in the background',
     server.close();
     llm.release();
     llm.server.close();
+  }
+});
+
+test('regenerating with another meeting template reuses the existing transcript', async () => {
+  const now = new Date().toISOString();
+  const data = createInitialData(now);
+  const owner = data.employees.find((employee) => employee.display_name === '离心');
+  const membership = data.employee_departments.find((item) => item.employee_id === owner.id);
+  data.audio_records.push({
+    ...completedRecord('rec-regenerate-template', owner, membership.department_id, now),
+    source_type: 'manual_upload',
+    source_media_url_hash: '',
+    asr_task_id: 'dashscope-existing-task',
+  });
+  data.transcripts.push({
+    id: 'transcript-regenerate-template',
+    audio_record_id: 'rec-regenerate-template',
+    asr_provider: 'dashscope',
+    asr_task_id: 'dashscope-existing-task',
+    raw_text: '会议决定由离心下周整理执行事项，并由团队确认截止时间。',
+    corrected_text: '会议决定由离心下周整理执行事项，并由团队确认截止时间。',
+    segments_json: [{ id: 'seg-1', startMs: 0, endMs: 1000, text: '整理执行事项' }],
+    speaker_aliases_json: {},
+    duration_ms: 1000,
+    cost_cny: null,
+    created_at: now,
+    updated_at: now,
+  });
+
+  const { server, baseUrl } = await startTestServer({ initialData: data, recoverProcessing: false });
+  try {
+    const lixin = await login(baseUrl, '离心');
+    const start = await request(baseUrl, '/api/records/rec-regenerate-template/summarize', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ templateType: 'meeting_secretary', followupType: 'none' }),
+    });
+    assert.equal(start.response.status, 200);
+    assert.equal(start.body.record.status, 'summarizing');
+    assert.equal(start.body.record.templateType, 'meeting_secretary');
+
+    await waitFor(async () => {
+      const detail = await request(baseUrl, '/api/records/rec-regenerate-template', {
+        headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      });
+      return detail.body.record.status === 'completed';
+    });
+
+    const detail = await request(baseUrl, '/api/records/rec-regenerate-template', {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    assert.equal(detail.body.record.templateType, 'meeting_secretary');
+    assert.equal(detail.body.record.asrTaskId, 'dashscope-existing-task');
+    assert.match(detail.body.record.summary.summary_markdown, /会议秘书/);
+
+    const list = await request(baseUrl, '/api/records', {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    assert.equal(list.body.records.filter((record) => record.id === 'rec-regenerate-template').length, 1);
+    assert.equal(detail.body.record.processingEvents.some((event) => event.phase === 'transcribing'), false);
+  } finally {
+    server.close();
   }
 });
 

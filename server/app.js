@@ -18,6 +18,7 @@ const { deleteR2Objects, isR2Configured, presignR2Url, putR2Object } = require('
 const { isDashScopeConfigured, fetchDashScopeTranscription, resolveDashScopeBaseUrl, submitDashScopeTask, waitForDashScopeTask } = require('./lib/dashscope');
 const { generateSummary, testLlmProviderConnection } = require('./lib/llm');
 const { assessSummaryQuality, isSummaryUsable } = require('./lib/summary-quality');
+const { mediaUrlFingerprint, rawMediaUrlFingerprint } = require('./lib/media-fingerprint');
 const {
   DEFAULT_LLM_PROVIDER_TEMPLATES,
   GENERATION_PROTOCOLS,
@@ -62,6 +63,7 @@ const WEB_ASSETS = new Map([
   ['/sidepanel.css', { file: 'sidepanel.css', contentType: 'text/css; charset=utf-8' }],
   ['/sidepanel.js', { file: 'sidepanel.js', contentType: 'text/javascript; charset=utf-8' }],
 ]);
+const DUPLICATE_RECORD_STATUSES = new Set(['uploaded', 'transcribing', 'summarizing', 'transcribed', 'completed', 'failed']);
 
 function createVoiceServer(options = {}) {
   const config = {
@@ -296,8 +298,33 @@ async function routeRequest(req, res, store, config) {
     return;
   }
 
+  if (req.method === 'POST' && pathname === '/api/records/check-duplicate') {
+    const body = await readJson(req);
+    const duplicate = findDuplicateWebCaptureRecord(auth.employee, body.candidateUrl, store);
+    if (!duplicate) {
+      sendJson(res, 200, { duplicate: false });
+      return;
+    }
+    sendJson(res, 200, {
+      duplicate: true,
+      record: serializeDuplicateRecord(duplicate, store),
+    });
+    return;
+  }
+
   if (req.method === 'POST' && pathname === '/api/records') {
     const body = await readJson(req);
+    if (shouldCheckWebCaptureDuplicate(body)) {
+      const duplicate = findDuplicateWebCaptureRecord(auth.employee, body.candidateUrl, store);
+      if (duplicate && body.forceDuplicate !== true) {
+        sendJson(res, 409, {
+          error: '这条录音已识别过',
+          duplicate: true,
+          record: serializeDuplicateRecord(duplicate, store),
+        });
+        return;
+      }
+    }
     const ownerDepartment = pickOwnerDepartment(auth.employee, store, body.departmentId);
     const titleMeta = normalizeInitialTitle(body, body.sourceType);
     const record = store.insert('audio_records', {
@@ -311,7 +338,7 @@ async function routeRequest(req, res, store, config) {
       source_type: body.sourceType || 'manual_upload',
       source_page_url: body.sourcePageUrl || '',
       source_page_title: body.sourcePageTitle || '',
-      source_media_url_hash: body.candidateUrl ? sha256(body.candidateUrl) : '',
+      source_media_url_hash: body.candidateUrl ? mediaUrlFingerprint(body.candidateUrl) : '',
       original_file_name: '',
       mime_type: '',
       file_size: 0,
@@ -440,7 +467,7 @@ async function routeRequest(req, res, store, config) {
         error_message: '',
         processing_started_at: record.processing_started_at || new Date().toISOString(),
         last_progress_at: new Date().toISOString(),
-        source_media_url_hash: upload.fields.candidateUrl ? sha256(upload.fields.candidateUrl) : record.source_media_url_hash,
+        source_media_url_hash: upload.fields.candidateUrl ? mediaUrlFingerprint(upload.fields.candidateUrl) : record.source_media_url_hash,
       });
       addProcessingEvent(store, record.id, 'uploaded', '录音已上传，后台准备处理。', {
         fileName: file.filename || storedName,
@@ -1109,6 +1136,42 @@ function filterRecord(record, params, store) {
     if (!haystack.includes(keyword)) return false;
   }
   return true;
+}
+
+function shouldCheckWebCaptureDuplicate(body = {}) {
+  return body.sourceType === 'web_capture' && Boolean(String(body.candidateUrl || '').trim());
+}
+
+function findDuplicateWebCaptureRecord(employee, candidateUrl, store) {
+  const normalizedHash = mediaUrlFingerprint(candidateUrl);
+  const rawHash = rawMediaUrlFingerprint(candidateUrl);
+  const hashes = new Set([normalizedHash, rawHash].filter(Boolean));
+  if (!hashes.size) return null;
+  return store.table('audio_records')
+    .filter((record) => record.owner_employee_id === employee.id)
+    .filter((record) => !record.deleted_at)
+    .filter((record) => DUPLICATE_RECORD_STATUSES.has(record.status))
+    .filter((record) => record.source_media_url_hash && hashes.has(record.source_media_url_hash))
+    .sort((left, right) => String(right.updated_at || right.created_at).localeCompare(String(left.updated_at || left.created_at)))
+    [0] || null;
+}
+
+function serializeDuplicateRecord(record, store) {
+  const transcript = store.table('transcripts').find((item) => item.audio_record_id === record.id);
+  const summary = store.table('summaries').find((item) => item.audio_record_id === record.id);
+  return {
+    id: record.id,
+    title: record.title,
+    status: record.status,
+    createdAt: record.created_at,
+    updatedAt: record.updated_at,
+    templateType: record.template_type,
+    followupType: normalizeFollowupType(record.followup_type, record.template_type),
+    hasTranscript: Boolean(transcript?.corrected_text || transcript?.raw_text),
+    hasSummary: Boolean(summary?.summary_markdown || summary?.overview_card_json || summary?.mind_map_json),
+    durationSeconds: record.duration_seconds,
+    fileSize: record.file_size,
+  };
 }
 
 function audioStorageKey(record) {
@@ -2557,10 +2620,6 @@ function originFromUrl(value) {
   } catch {
     return '';
   }
-}
-
-function sha256(value) {
-  return crypto.createHash('sha256').update(String(value)).digest('hex');
 }
 
 function safeExtension(fileName) {

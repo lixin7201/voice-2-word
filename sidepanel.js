@@ -11,6 +11,7 @@ const MAX_AUDIO_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 const RECOMMENDED_AUDIO_SECONDS = 2 * 60 * 60;
 const MAX_AUDIO_SECONDS = 12 * 60 * 60;
 const STORAGE_KEYS = ['apiBaseUrl', 'accessToken', 'currentUser', 'preferredTemplateType', 'preferredFollowupType', 'clientErrors'];
+const MEETING_TEMPLATE_VALUES = new Set(['meeting_minutes', 'meeting_comprehensive_expert', 'meeting_secretary', 'smart_summary', 'phone_discussion']);
 
 const appState = {
   apiBaseUrl: DEFAULT_API_BASE_URL,
@@ -96,6 +97,7 @@ let scheduledRender = 0;
 let detailPollTimer = 0;
 let recordsPollTimer = 0;
 let clientErrorHandlersInstalled = false;
+const candidateDuplicateRequests = new Set();
 
 installClientErrorHandlers();
 document.addEventListener('DOMContentLoaded', init);
@@ -476,7 +478,8 @@ function renderCandidateCard(candidate, index, primary) {
   const job = appState.candidateJobs[index] || {};
   const title = appState.candidateTitleDrafts[index] ?? job.title ?? defaultTitle;
   const subtitle = candidateSubtitle(candidate);
-  const stateLabel = candidateJobLabel(job) || (candidate.uploadable === false ? (candidate.lowConfidence ? '疑似无效' : '需手动上传') : (primary ? '当前录音' : '备用候选'));
+  const duplicate = candidateDuplicate(candidate);
+  const stateLabel = candidateJobLabel(job) || duplicateCandidateLabel(candidate) || (candidate.uploadable === false ? (candidate.lowConfidence ? '疑似无效' : '需手动上传') : (primary ? '当前录音' : '备用候选'));
   const action = renderCandidateAction(candidate, index, primary, job);
   return `
     <div class="candidate-card ${primary ? 'primary-candidate' : ''}">
@@ -484,7 +487,7 @@ function renderCandidateCard(candidate, index, primary) {
       <div class="candidate-body">
         <div class="item-title">
           <span>${escapeHtml(title)}</span>
-          <span class="badge ${candidate.uploadable === false ? 'failed' : ''}">${escapeHtml(stateLabel)}</span>
+          <span class="badge ${candidateBadgeClass(candidate, duplicate)}">${escapeHtml(stateLabel)}</span>
         </div>
         <div class="meta">${escapeHtml(subtitle)}</div>
         <div class="field compact-field">
@@ -492,6 +495,7 @@ function renderCandidateCard(candidate, index, primary) {
           <input id="candidate-title-${index}" data-candidate-title="${index}" data-default-title="${escapeHtml(defaultTitle)}" value="${escapeHtml(title)}" placeholder="例如：客户电话沟通">
         </div>
         ${candidate.uploadable === false ? `<div class="status error">${escapeHtml(candidate.unsupportedReason || '该候选暂不能直接上传为单个录音文件。')}</div>` : ''}
+        ${duplicate ? renderCandidateDuplicateNotice(candidate) : ''}
         ${renderCandidateJob(job, index)}
         ${primary && candidate.uploadable !== false ? '<div class="hint candidate-hint">候选页不直接播放录音；点击生成纪要后，可在详情页播放和跳转逐字稿时间戳。</div>' : ''}
       </div>
@@ -503,6 +507,14 @@ function renderCandidateCard(candidate, index, primary) {
 function renderCandidateAction(candidate, index, primary, job = {}) {
   if (candidate.uploadable === false) {
     return `<button class="btn candidate-action" type="button" data-action="manual-upload-from-candidate" data-index="${index}">手动上传录音</button>`;
+  }
+  if (candidateDuplicate(candidate) && !isCandidateJobBusy(job)) {
+    return `
+      <div class="candidate-actions">
+        <button class="btn primary" type="button" data-action="open-duplicate-record" data-index="${index}">${escapeHtml(duplicateOpenButtonLabel(candidate))}</button>
+        <button class="btn" type="button" data-action="force-upload-candidate" data-index="${index}">仍要重新识别</button>
+      </div>
+    `;
   }
   if (isCandidateJobBusy(job)) {
     return `<button class="btn primary candidate-action" type="button" data-action="upload-candidate" data-index="${index}" disabled>${escapeHtml(candidateJobLabel(job) || '处理中')}</button>`;
@@ -518,6 +530,44 @@ function renderCandidateAction(candidate, index, primary, job = {}) {
     `;
   }
   return `<button class="btn primary candidate-action" type="button" data-action="upload-candidate" data-index="${index}">${primary ? '生成纪要' : '使用这条生成'}</button>`;
+}
+
+function candidateBadgeClass(candidate, duplicate) {
+  if (duplicate) return duplicate.record?.status === 'failed' ? 'failed' : 'completed';
+  return candidate.uploadable === false ? 'failed' : '';
+}
+
+function candidateDuplicate(candidate = {}) {
+  const duplicate = candidate.duplicate || {};
+  return duplicate.checked && duplicate.duplicate && duplicate.record ? duplicate : null;
+}
+
+function duplicateCandidateLabel(candidate) {
+  const duplicate = candidateDuplicate(candidate);
+  if (!duplicate) return '';
+  const status = duplicate.record?.status || '';
+  if (status === 'failed') return '之前识别失败';
+  if (['uploaded', 'transcribing', 'summarizing'].includes(status)) return '已有任务处理中';
+  return '已识别过';
+}
+
+function renderCandidateDuplicateNotice(candidate) {
+  const duplicate = candidateDuplicate(candidate);
+  if (!duplicate) return '';
+  const status = duplicate.record?.status || '';
+  const message = status === 'failed'
+    ? '这条录音之前处理失败，可打开记录重试。'
+    : ['uploaded', 'transcribing', 'summarizing'].includes(status)
+      ? '这条录音已进入处理流程，可直接查看进度。'
+      : '这个账号下已处理过这条录音，可直接打开已有记录，避免重复消耗识别额度。';
+  return `<div class="status warning candidate-duplicate-notice">${escapeHtml(message)}</div>`;
+}
+
+function duplicateOpenButtonLabel(candidate) {
+  const status = candidateDuplicate(candidate)?.record?.status || '';
+  if (status === 'failed') return '打开记录重试';
+  if (['uploaded', 'transcribing', 'summarizing'].includes(status)) return '查看处理进度';
+  return '打开已有记录';
 }
 
 function renderCandidateJob(job = {}, index = 0) {
@@ -1218,7 +1268,10 @@ function renderFollowupResultPanel(record) {
   ];
   return `
     <section class="summary-result-panel followup-result-panel">
-      <div class="item-title"><h3>跟单信息</h3></div>
+      <div class="item-title">
+        <h3>跟单信息</h3>
+        <button class="btn" type="button" data-action="copy-followup">复制跟单</button>
+      </div>
       <div class="followup-field-grid">
         ${fieldRows.map(([label, value]) => `
           <div class="followup-field-card">
@@ -1237,6 +1290,174 @@ function renderFollowupResultPanel(record) {
       </details>
     </section>
   `;
+}
+
+async function copyFollowup() {
+  if (!appState.detail) return;
+  if (followupFormHasUnsavedChanges(appState.detail)) {
+    setStatus('当前跟单有未保存修改，请先保存后复制。', 'warning');
+    render();
+    return;
+  }
+  try {
+    await copyText(formatFollowupCopy(appState.detail));
+    setStatus('跟单已复制', 'success');
+  } catch {
+    setStatus('复制失败，请手动选中内容复制', 'error');
+  }
+  render();
+}
+
+function followupFormHasUnsavedChanges(record) {
+  const form = document.getElementById('followup-form');
+  if (!form) return false;
+  const followup = record.followupForm || {};
+  return (
+    String(form.stage?.value || '') !== String(followup.stage || '') ||
+    String(form.companyName?.value || '') !== String(followup.company_name || followup.customer_name || '') ||
+    String(form.statusLabel?.value || '') !== String(followup.status_label || '') ||
+    String(form.suggestedTag?.value || '') !== String(followup.suggested_tag || '') ||
+    String(form.followupMarkdown?.value || '') !== String(followup.followup_markdown || '')
+  );
+}
+
+function formatFollowupCopy(record) {
+  const type = followupCopyType(record);
+  if (type === 'matchmaker') return formatCopyFields(record, matchmakerCopyFields());
+  if (type === 'recruitment') return formatCopyFields(record, recruitmentCopyFields());
+  return formatCopyFields(record, generalCustomerCopyFields());
+}
+
+function followupCopyType(record) {
+  const businessType = record.followupForm?.business_type || '';
+  if (businessType === 'matchmaker' || businessType === 'recruitment' || businessType === 'general_customer') return businessType;
+  const type = normalizeFollowupTypeUi(record.followupType, record.templateType);
+  return type === 'none' ? 'general_customer' : type;
+}
+
+function formatCopyFields(record, specs) {
+  return specs.map(([label, resolver]) => `【${label}】：${cleanCopyValue(resolver(record))}`).join('\n');
+}
+
+function matchmakerCopyFields() {
+  return [
+    ['报价金额/成交状态', (record) => followupValue(record, ['quoteAndDealStatus'], record.followupForm?.status_label)],
+    ['未成交原因', (record) => followupValue(record, ['notDealReason'])],
+    ['第一印象', (record) => followupValue(record, ['firstImpression'])],
+    ['个人基本情况', (record) => followupValue(record, ['basicProfile'])],
+    ['工作收入', (record) => followupValue(record, ['workIncome'])],
+    ['资产情况', (record) => followupValue(record, ['assets'])],
+    ['家庭情况', (record) => followupValue(record, ['family'])],
+    ['兴趣爱好', (record) => followupValue(record, ['hobbies'])],
+    ['情感经历', (record) => followupValue(record, ['relationshipHistory'])],
+    ['择偶硬性条件', (record) => followupValue(record, ['hardRequirements'])],
+    ['择偶弹性偏好', (record) => followupValue(record, ['flexiblePreferences'])],
+    ['忌讳点', (record) => followupValue(record, ['taboo'])],
+    ['性格优点', (record) => followupValue(record, ['personalityStrengths'])],
+    ['性格挑战', (record) => followupValue(record, ['personalityRisks'])],
+    ['服务匹配建议', (record) => followupValue(record, ['serviceSuggestion'])],
+    ['下次跟进话术', (record) => followupValue(record, ['nextScript'])],
+    ['待补充信息', (record) => followupValue(record, ['pendingInfo'])],
+  ];
+}
+
+function recruitmentCopyFields() {
+  return [
+    ['跟进阶段', (record) => stageLabel(record.followupForm?.stage || followupValue(record, ['stage']))],
+    ['当前客户状态', (record) => followupValue(record, ['customerStatus'], record.followupForm?.status_label)],
+    ['企业/客户名称', (record) => record.followupForm?.company_name || followupValue(record, ['companyName'])],
+    ['联系人/角色', (record) => followupValue(record, ['contactRole'])],
+    ['招聘岗位', (record) => followupValue(record, ['hiringRoles'])],
+    ['招聘人数', (record) => followupValue(record, ['hiringCount'])],
+    ['岗位要求', (record) => followupValue(record, ['requirements'])],
+    ['薪资福利', (record) => followupValue(record, ['salaryBenefits'])],
+    ['是否已添加微信', (record) => followupValue(record, ['wechatAdded'])],
+    ['客户顾虑', (record) => followupValue(record, ['concerns'])],
+    ['下一步动作', (record) => followupValue(record, ['nextAction'])],
+    ['建议标签', (record) => record.followupForm?.suggested_tag || followupValue(record, ['suggestedTag'])],
+    ['待补充信息', (record) => followupValue(record, ['pendingInfo'])],
+  ];
+}
+
+function generalCustomerCopyFields() {
+  return [
+    ['客户状态', (record) => followupValue(record, ['customerStatus'], record.followupForm?.status_label)],
+    ['客户/企业名称', (record) => record.followupForm?.company_name || record.followupForm?.customer_name || followupValue(record, ['customerName', 'companyName'])],
+    ['沟通关键信息', (record) => followupValue(record, ['keyInfo', 'key_information'])],
+    ['客户需求', (record) => followupValue(record, ['needs', 'need', 'requirement'])],
+    ['客户顾虑', (record) => followupValue(record, ['concerns'])],
+    ['下一步动作', (record) => followupValue(record, ['nextAction', 'next_action', 'action'])],
+    ['待补充信息', (record) => followupValue(record, ['pendingInfo'])],
+  ];
+}
+
+function followupValue(record, keys, fallback = '') {
+  const followup = record.followupForm || {};
+  const fields = followup.fields_json && typeof followup.fields_json === 'object' ? followup.fields_json : {};
+  for (const key of keys) {
+    const value = cleanCopyValue(fields[key]);
+    if (value) return value;
+  }
+  const markdownFields = parseFollowupMarkdownFields(followup.followup_markdown || '');
+  for (const key of keys) {
+    const value = cleanCopyValue(markdownFields[key] || markdownFields[copyFieldAlias(key)]);
+    if (value) return value;
+  }
+  return cleanCopyValue(fallback);
+}
+
+function parseFollowupMarkdownFields(text) {
+  const fields = {};
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const match = line.trim().match(/^【([^】]+)】[:：]\s*(.*)$/);
+    if (!match) continue;
+    fields[match[1]] = match[2];
+  }
+  return fields;
+}
+
+function copyFieldAlias(key) {
+  return ({
+    quoteAndDealStatus: '报价金额/成交状态',
+    notDealReason: '未成交原因',
+    firstImpression: '第一印象',
+    basicProfile: '个人基本情况',
+    workIncome: '工作收入',
+    assets: '资产情况',
+    family: '家庭情况',
+    hobbies: '兴趣爱好',
+    relationshipHistory: '情感经历',
+    hardRequirements: '择偶硬性条件',
+    flexiblePreferences: '择偶弹性偏好',
+    taboo: '忌讳点',
+    personalityStrengths: '性格优点',
+    personalityRisks: '性格挑战',
+    serviceSuggestion: '服务匹配建议',
+    nextScript: '下次跟进话术',
+    pendingInfo: '待补充信息',
+    customerStatus: '当前客户状态',
+    companyName: '企业/客户名称',
+    contactRole: '联系人/角色',
+    hiringRoles: '招聘岗位',
+    hiringCount: '招聘人数',
+    requirements: '岗位要求',
+    salaryBenefits: '薪资福利',
+    wechatAdded: '是否已添加微信',
+    concerns: '客户顾虑',
+    nextAction: '下一步动作',
+    suggestedTag: '建议标签',
+    customerName: '客户/企业名称',
+    keyInfo: '沟通关键信息',
+    needs: '客户需求',
+  })[key] || key;
+}
+
+function cleanCopyValue(value) {
+  if (Array.isArray(value)) return value.map(cleanCopyValue).filter(Boolean).join('、');
+  if (value && typeof value === 'object') return Object.values(value).map(cleanCopyValue).filter(Boolean).join('、');
+  const text = String(value || '').trim();
+  if (!text || /^(待核对|待确认|暂无|未提及|不明确|需补充)$/.test(text)) return '';
+  return text;
 }
 
 function renderOverviewCard(rawCard, record) {
@@ -1984,7 +2205,11 @@ function recruitmentStageOptions() {
 
 function renderTemplateSelect(id, selected) {
   const templates = appState.templates.length ? appState.templates : [
-    { value: 'meeting_minutes', label: '会议纪要' },
+    { value: 'meeting_minutes', label: '推理总结' },
+    { value: 'meeting_comprehensive_expert', label: '会议总结全面专家' },
+    { value: 'meeting_secretary', label: '会议秘书' },
+    { value: 'smart_summary', label: '智能摘要' },
+    { value: 'phone_discussion', label: '电话讨论' },
     { value: 'business_review', label: '业务复盘' },
     { value: 'customer_follow_up', label: '通用客户跟进' },
     { value: 'matchmaker_profile', label: '红娘客户画像' },
@@ -2005,6 +2230,7 @@ function renderFollowupSelect(id, selected) {
 
 function renderProcessingPicker(prefix, selectedTemplate, selectedFollowup) {
   const state = processingPickerState(prefix, selectedTemplate, selectedFollowup);
+  const meetingOptions = meetingTemplateOptionsForPicker();
   const followupOptions = followupOptionsForPicker();
   return `
     <div class="processing-picker" data-processing-prefix="${escapeHtml(prefix)}">
@@ -2020,7 +2246,15 @@ function renderProcessingPicker(prefix, selectedTemplate, selectedFollowup) {
             dataPrefix: prefix,
           })}
         </div>
-      ` : ''}
+      ` : `
+        <div class="field processing-subfield">
+          <label for="${escapeHtml(prefix)}-template-select">总结模板</label>
+          ${renderNativeSelect(`${prefix}-template-select`, 'templateTypeSelect', meetingOptions, state.templateType, {
+            dataAction: 'template-type-select',
+            dataPrefix: prefix,
+          })}
+        </div>
+      `}
       <input id="${escapeHtml(prefix)}-template" name="templateType" type="hidden" value="${escapeHtml(state.templateType)}">
       <input id="${escapeHtml(prefix)}-followup" name="followupType" type="hidden" value="${escapeHtml(state.followupType)}">
     </div>
@@ -2069,8 +2303,19 @@ function processingPickerState(prefix, selectedTemplate, selectedFollowup) {
   const mode = normalizedFollowup === 'none' ? 'meeting' : 'followup';
   const fallbackFollowup = preferredFollowupTypeUi();
   const followupType = mode === 'meeting' ? 'none' : (normalizeFollowupTypeUi(normalizedFollowup, templateChoice) === 'none' ? fallbackFollowup : normalizedFollowup);
-  const templateType = mode === 'meeting' ? 'meeting_minutes' : templateTypeForFollowupUi(followupType);
+  const templateType = mode === 'meeting' ? normalizeMeetingTemplateType(templateChoice) : templateTypeForFollowupUi(followupType);
   return { mode, templateType, followupType };
+}
+
+function meetingTemplateOptionsForPicker() {
+  const templates = appState.templates.length ? appState.templates : [
+    { value: 'meeting_minutes', label: '推理总结' },
+    { value: 'meeting_comprehensive_expert', label: '会议总结全面专家' },
+    { value: 'meeting_secretary', label: '会议秘书' },
+    { value: 'smart_summary', label: '智能摘要' },
+    { value: 'phone_discussion', label: '电话讨论' },
+  ];
+  return templates.filter((option) => MEETING_TEMPLATE_VALUES.has(option.value));
 }
 
 function followupOptionsForPicker() {
@@ -2085,6 +2330,14 @@ function followupOptionsForPicker() {
 function preferredFollowupTypeUi() {
   const current = normalizeFollowupTypeUi(currentFollowupType(), currentTemplateType());
   return current === 'none' ? 'general_customer' : current;
+}
+
+function preferredMeetingTemplateType() {
+  return normalizeMeetingTemplateType(appState.preferredTemplateType || appState.defaultTemplate || 'meeting_minutes');
+}
+
+function normalizeMeetingTemplateType(value) {
+  return MEETING_TEMPLATE_VALUES.has(String(value || '')) ? String(value) : 'meeting_minutes';
 }
 
 function normalizeFollowupTypeUi(value, fallbackTemplateType = '') {
@@ -2294,6 +2547,8 @@ function bindCommon() {
 function bindCurrentView() {
   onClick('button[data-action="scan-page"]', (event) => scanPage({ keepCandidates: event?.currentTarget?.dataset?.keepCandidates === '1' }));
   onClick('button[data-action="upload-candidate"]', (_event, button) => uploadCandidate(Number(button.dataset.index)));
+  onClick('button[data-action="open-duplicate-record"]', (_event, button) => openDuplicateRecord(Number(button.dataset.index)));
+  onClick('button[data-action="force-upload-candidate"]', (_event, button) => forceUploadCandidate(Number(button.dataset.index)));
   onClick('button[data-action="retry-candidate-upload"]', (_event, button) => retryCandidateUpload(Number(button.dataset.index)));
   onClick('button[data-action="manual-upload-from-candidate"]', (_event, button) => openManualUploadFromCandidate(Number(button.dataset.index)));
   onClick('button[data-action="copy-candidate-diagnostics"]', (_event, button) => copyCandidateDiagnostics(Number(button.dataset.index)));
@@ -2399,6 +2654,7 @@ function bindCurrentView() {
     setStatus('总结已复制', 'success');
     render();
   });
+  onClick('button[data-action="copy-followup"]', copyFollowup);
 
   onClick('button[data-action="transcribe-record"]', transcribeRecord);
 
@@ -2518,6 +2774,12 @@ function bindCurrentView() {
 
   onClick('button[data-action="processing-mode-choice"]', (_event, button) => setProcessingModeChoice(button.dataset.prefix || '', button.dataset.mode || 'meeting'));
 
+  document.querySelectorAll('[data-action="template-type-select"]').forEach((select) => {
+    select.addEventListener('change', () => {
+      setProcessingTemplateChoice(select.dataset.prefix || '', select.value || 'meeting_minutes');
+    });
+  });
+
   document.querySelectorAll('[data-action="followup-type-select"]').forEach((select) => {
     select.addEventListener('change', () => {
       setProcessingFollowupChoice(select.dataset.prefix || '', select.value || 'general_customer');
@@ -2582,6 +2844,7 @@ async function scanPage(options = {}) {
       source: 'demo',
       size: 0,
     }];
+    scheduleCandidateDuplicateChecks();
     setStatus('当前不是 Chrome 扩展环境，已显示演示候选。', 'success');
     render();
     return;
@@ -2603,6 +2866,7 @@ function handleBackgroundState(state) {
   } else if (state.url) {
     appState.candidates = [{ url: state.url, name: fileNameFromUrl(state.url), type: 'media', source: 'page', size: 0 }];
   }
+  scheduleCandidateDuplicateChecks();
   if (state.phase === 'confirm' && appState.candidates.length) {
     appState.backgroundCandidateNotice = state.statusText || '已找到当前页录音，可以开始识别。';
     if (shouldAutoOpenCapture(appState.view)) appState.view = 'capture';
@@ -2616,6 +2880,65 @@ function handleBackgroundState(state) {
     appState.backgroundCandidateNotice = state.statusText || '正在监听当前网页。';
   }
   if (shouldRenderForBackgroundState(state)) scheduleRender();
+}
+
+function scheduleCandidateDuplicateChecks() {
+  if (!appState.accessToken) return;
+  appState.candidates.forEach((candidate, index) => {
+    if (!shouldCheckCandidateDuplicate(candidate)) return;
+    const key = String(candidate.url || '');
+    if (candidateDuplicateRequests.has(key)) return;
+    candidateDuplicateRequests.add(key);
+    markCandidateDuplicate(index, key, { checking: true, checked: false, duplicate: false, record: null });
+    checkCandidateDuplicate(candidate, index, key).finally(() => {
+      candidateDuplicateRequests.delete(key);
+    });
+  });
+}
+
+function shouldCheckCandidateDuplicate(candidate = {}) {
+  if (!candidate.url || candidate.uploadable === false) return false;
+  if (candidate.duplicate?.checked || candidate.duplicate?.checking) return false;
+  return /^https?:\/\//i.test(String(candidate.url));
+}
+
+async function checkCandidateDuplicate(candidate, index, key) {
+  try {
+    const body = await api('/api/records/check-duplicate', {
+      method: 'POST',
+      body: {
+        candidateUrl: candidate.url,
+        sourcePageUrl: candidate.pageUrl || '',
+        sourcePageTitle: candidate.pageTitle || '',
+      },
+    });
+    markCandidateDuplicate(index, key, {
+      checking: false,
+      checked: true,
+      duplicate: Boolean(body.duplicate),
+      record: body.record || null,
+    });
+    if (body.duplicate && appState.view === 'capture') {
+      setStatus('这条录音已识别过，已为你找到历史记录。', 'warning');
+    }
+    scheduleRender();
+  } catch {
+    markCandidateDuplicate(index, key, {
+      checking: false,
+      checked: false,
+      duplicate: false,
+      record: null,
+    });
+  }
+}
+
+function markCandidateDuplicate(index, key, duplicate) {
+  const candidate = appState.candidates[index];
+  if (!candidate || String(candidate.url || '') !== key) return;
+  appState.candidates[index] = {
+    ...candidate,
+    duplicate,
+  };
 }
 
 function shouldAutoOpenCapture(view) {
@@ -2689,6 +3012,20 @@ function copyCandidateDiagnostics(index) {
     setStatus('候选诊断已复制', 'success');
     render();
   });
+}
+
+async function openDuplicateRecord(index) {
+  const recordId = candidateDuplicate(appState.candidates[index])?.record?.id || '';
+  if (!recordId) return;
+  await openRecord(recordId);
+}
+
+async function forceUploadCandidate(index) {
+  const ok = typeof window === 'undefined' || !window.confirm
+    ? true
+    : window.confirm('这条录音已经识别过，继续会重新上传并重新转写，可能产生额外费用。是否继续？');
+  if (!ok) return;
+  await uploadCandidate(index, { forceDuplicate: true });
 }
 
 function diagnosticCandidateJob(job = {}) {
@@ -2784,7 +3121,7 @@ function setInlineStatus(id, message, type = '') {
   node.textContent = message || '';
 }
 
-async function uploadCandidate(index) {
+async function uploadCandidate(index, options = {}) {
   const candidate = appState.candidates[index];
   if (!candidate?.url) return;
   if (candidate.uploadable === false) {
@@ -2806,6 +3143,14 @@ async function uploadCandidate(index) {
     setStatus(candidateValidation.message, 'error');
     render();
     return;
+  }
+  if (options.forceDuplicate !== true && appState.accessToken) {
+    const duplicate = await ensureCandidateDuplicateChecked(index, candidate);
+    if (duplicate) {
+      setStatus('这条录音已识别过，已为你找到历史记录。', 'warning');
+      render();
+      return;
+    }
   }
   const templateType = document.getElementById('capture-template')?.value || currentTemplateType();
   const followupType = document.getElementById('capture-followup')?.value || currentFollowupType();
@@ -2846,6 +3191,7 @@ async function uploadCandidate(index) {
       templateType,
       followupType,
       candidateUrl: candidate.url,
+      forceDuplicate: options.forceDuplicate === true,
     });
     await rememberProcessingDefaults(templateType, followupType);
     phase = 'uploading';
@@ -2871,6 +3217,14 @@ async function uploadCandidate(index) {
     setStatus('录音已上传，任务已进入后端处理。', 'success');
   } catch (error) {
     const message = error.message || String(error);
+    if (error.status === 409 && error.data?.duplicate) {
+      markCandidateDuplicate(index, String(candidate.url || ''), {
+        checking: false,
+        checked: true,
+        duplicate: true,
+        record: error.data.record || null,
+      });
+    }
     setCandidateJob(index, {
       phase: phase === 'reading' ? 'read_failed' : 'failed',
       title,
@@ -2883,6 +3237,38 @@ async function uploadCandidate(index) {
     });
     setStatus(message, 'error');
     render();
+  }
+}
+
+async function ensureCandidateDuplicateChecked(index, candidate) {
+  const known = candidateDuplicate(candidate);
+  if (known) return known;
+  if (!appState.accessToken || !/^https?:\/\//i.test(String(candidate.url || ''))) return null;
+  try {
+    markCandidateDuplicate(index, String(candidate.url || ''), { checking: true, checked: false, duplicate: false, record: null });
+    const body = await api('/api/records/check-duplicate', {
+      method: 'POST',
+      body: {
+        candidateUrl: candidate.url,
+        sourcePageUrl: candidate.pageUrl || '',
+        sourcePageTitle: candidate.pageTitle || '',
+      },
+    });
+    markCandidateDuplicate(index, String(candidate.url || ''), {
+      checking: false,
+      checked: true,
+      duplicate: Boolean(body.duplicate),
+      record: body.record || null,
+    });
+    return body.duplicate ? appState.candidates[index]?.duplicate || null : null;
+  } catch {
+    markCandidateDuplicate(index, String(candidate.url || ''), {
+      checking: false,
+      checked: false,
+      duplicate: false,
+      record: null,
+    });
+    return null;
   }
 }
 
@@ -3059,8 +3445,18 @@ function setProcessingModeChoice(prefix, mode) {
     appState.processingChoices[`${prefix}-template`] = templateTypeForFollowupUi(followupType);
   } else {
     appState.processingChoices[`${prefix}-followup`] = 'none';
-    appState.processingChoices[`${prefix}-template`] = 'meeting_minutes';
+    appState.processingChoices[`${prefix}-template`] = preferredMeetingTemplateType();
   }
+  render();
+}
+
+function setProcessingTemplateChoice(prefix, templateType) {
+  if (!prefix) return;
+  const nextTemplate = normalizeMeetingTemplateType(templateType);
+  appState.processingChoices[`${prefix}-template`] = nextTemplate;
+  appState.processingChoices[`${prefix}-followup`] = 'none';
+  appState.preferredTemplateType = nextTemplate;
+  storageSet({ preferredTemplateType: nextTemplate });
   render();
 }
 
@@ -3070,6 +3466,8 @@ function setProcessingFollowupChoice(prefix, followupType) {
   const nextFollowup = normalized === 'none' ? 'general_customer' : normalized;
   appState.processingChoices[`${prefix}-followup`] = nextFollowup;
   appState.processingChoices[`${prefix}-template`] = templateTypeForFollowupUi(nextFollowup);
+  appState.preferredFollowupType = nextFollowup;
+  storageSet({ preferredFollowupType: nextFollowup });
   render();
 }
 
@@ -4156,7 +4554,10 @@ async function api(path, options = {}) {
   const data = text ? JSON.parse(text) : {};
   if (!response.ok) {
     if (response.status === 401 && !options.skipAuth) await logout(false);
-    throw new Error(data.error || `请求失败：${response.status}`);
+    const error = new Error(data.error || `请求失败：${response.status}`);
+    error.status = response.status;
+    error.data = data;
+    throw error;
   }
   return data;
 }

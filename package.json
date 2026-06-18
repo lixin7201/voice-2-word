@@ -1,6 +1,6 @@
 {
   "name": "voice-2-word",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "大宜宾录音助手 Chrome 扩展和局域网后端",
   "main": "server/index.js",

@@ -121,6 +121,7 @@ globalThis.__sidepanel = {
   candidateReadFailureMessage,
   exportRecord,
   fetchCandidateBlob,
+  formatFollowupCopy,
   hasSummaryContent,
   handleBackgroundState,
   normalizedTranscriptSegments,
@@ -136,6 +137,7 @@ globalThis.__sidepanel = {
   renderCapture,
   renderRecordProgress,
   renderProcessingPicker,
+  setProcessingTemplateChoice,
 	  renderSummaryWorkspace,
 	  summarizeRecord,
 	  renderTemplateSelect,
@@ -637,6 +639,53 @@ test('summary workbench renders audio, clickable transcript, mind map, and downl
   assert.doesNotMatch(followupHtml, /会议概览/);
 });
 
+test('follow-up copy text uses fixed business fields with empty missing values', () => {
+  const { api } = loadSidepanel();
+  const matchmakerText = api.formatFollowupCopy({
+    templateType: 'matchmaker_profile',
+    followupType: 'matchmaker',
+    followupForm: {
+      business_type: 'matchmaker',
+      status_label: '已报价 3980',
+      followup_markdown: '【第一印象】：沟通主动\n【性格挑战】：待核对',
+      fields_json: {
+        basicProfile: '32 岁，本地工作',
+        assets: '有房',
+        serviceSuggestion: '先核对资料',
+      },
+    },
+  });
+  assert.match(matchmakerText, /^【报价金额\/成交状态】：已报价 3980/m);
+  assert.match(matchmakerText, /【个人基本情况】：32 岁，本地工作/);
+  assert.match(matchmakerText, /【资产情况】：有房/);
+  assert.match(matchmakerText, /【性格挑战】：\n/);
+  assert.doesNotMatch(matchmakerText, /待核对/);
+
+  const recruitmentText = api.formatFollowupCopy({
+    templateType: 'recruitment_followup',
+    followupType: 'recruitment',
+    followupForm: {
+      business_type: 'recruitment',
+      stage: 'mid_late_effective_followup',
+      company_name: '测试企业',
+      suggested_tag: 'C 类，有需求',
+      status_label: '推进中',
+      followup_markdown: '',
+      fields_json: {
+        hiringRoles: '服务员',
+        hiringCount: '',
+        requirements: '有经验优先',
+        nextAction: '下周回访',
+      },
+    },
+  });
+  assert.match(recruitmentText, /^【跟进阶段】：中后期有效跟进/m);
+  assert.match(recruitmentText, /【企业\/客户名称】：测试企业/);
+  assert.match(recruitmentText, /【招聘岗位】：服务员/);
+  assert.match(recruitmentText, /【招聘人数】：\n/);
+  assert.match(recruitmentText, /【建议标签】：C 类，有需求/);
+});
+
 test('fallback template summaries are visible but not treated as downloadable summaries', () => {
   const { api } = loadSidepanel();
   api.appState.accessToken = 'token-123';
@@ -755,10 +804,12 @@ test('detail page renders horizontal tabs and keeps panel state', () => {
   assert.doesNotMatch(collapsedHtml, /mind-map-canvas/);
 });
 
-test('processing settings render two mode cards and hide template complexity', () => {
+test('processing settings render meeting templates and follow-up type separately', () => {
   const { api } = loadSidepanel();
   api.appState.templates = [
-    { value: 'meeting_minutes', label: '会议纪要' },
+    { value: 'meeting_minutes', label: '推理总结' },
+    { value: 'meeting_secretary', label: '会议秘书' },
+    { value: 'phone_discussion', label: '电话讨论' },
     { value: 'business_review', label: '业务复盘' },
   ];
   api.appState.followupOptions = [
@@ -770,6 +821,10 @@ test('processing settings render two mode cards and hide template complexity', (
   assert.match(meetingHtml, /data-action="processing-mode-choice"/);
   assert.match(meetingHtml, /data-mode="meeting"/);
   assert.match(meetingHtml, /data-mode="followup"/);
+  assert.match(meetingHtml, /id="upload-template-select"/);
+  assert.match(meetingHtml, /推理总结/);
+  assert.match(meetingHtml, /会议秘书/);
+  assert.match(meetingHtml, /电话讨论/);
   assert.match(meetingHtml, /name="templateType" type="hidden" value="meeting_minutes"/);
   assert.match(meetingHtml, /name="followupType" type="hidden" value="none"/);
   assert.doesNotMatch(meetingHtml, /业务复盘/);
@@ -781,6 +836,7 @@ test('processing settings render two mode cards and hide template complexity', (
   assert.match(followupHtml, /id="upload-followup-select"/);
   assert.match(followupHtml, /<select/);
   assert.match(followupHtml, /招聘跟单/);
+  assert.doesNotMatch(followupHtml, /电话讨论/);
   assert.match(followupHtml, /name="templateType" type="hidden" value="recruitment_followup"/);
   assert.match(followupHtml, /name="followupType" type="hidden" value="recruitment"/);
 });
@@ -1004,6 +1060,13 @@ test('candidate upload shows card status immediately and recovers with manual fa
   const { api, appElement, timeoutDelays } = loadSidepanel({
     fetchImpl: (url, requestOptions, fetchCalls) => {
       fetchCalls.push({ url, requestOptions });
+      if (String(url).endsWith('/api/records/check-duplicate')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ duplicate: false }),
+        });
+      }
       return new Promise((_resolve, reject) => {
         rejectCandidateFetch = reject;
       });
@@ -1180,6 +1243,13 @@ test('continuous DOM flow keeps navigation usable after capture failure fallback
           }),
         });
       }
+      if (String(url).endsWith('/api/records/check-duplicate')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ duplicate: false }),
+        });
+      }
       return new Promise((_resolve, reject) => {
         rejectCandidateFetch = reject;
       });
@@ -1241,7 +1311,8 @@ test('continuous DOM flow keeps navigation usable after capture failure fallback
   api.appState.view = 'capture';
   api.render();
   const uploadPromise = api.uploadCandidate(0);
-  assert.match(dom.appElement.innerHTML, /正在读取网页录音/);
+  for (let index = 0; index < 20 && !rejectCandidateFetch; index += 1) await Promise.resolve();
+  assert.equal(typeof rejectCandidateFetch, 'function');
   rejectCandidateFetch(new Error('Failed to fetch'));
   await uploadPromise;
   assert.match(dom.appElement.innerHTML, /手动上传/);
@@ -1326,6 +1397,35 @@ test('capture page shows one current recording and folds other candidates', () =
   assert.match(html, /data-action="upload-candidate" data-index="0"/);
   assert.match(html, /还有 1 个其它候选，通常不用管/);
   assert.doesNotMatch(html, /https:\/\/web\.plaud\.cn\/api\/file/);
+});
+
+test('capture candidate renders duplicate record actions', () => {
+  const { api } = loadSidepanel();
+  api.appState.templates = [{ value: 'meeting_minutes', label: '推理总结' }];
+  api.appState.followupOptions = [{ value: 'none', label: '不生成跟单' }];
+  api.appState.candidates = [{
+    url: 'https://web.plaud.cn/api/file?id=current',
+    name: '客户录音.mp3',
+    type: 'mp3',
+    source: 'network:xmlhttprequest',
+    size: 3 * 1024 * 1024,
+    uploadable: true,
+    duplicate: {
+      checked: true,
+      duplicate: true,
+      record: {
+        id: 'rec_existing',
+        title: '客户电话沟通',
+        status: 'completed',
+      },
+    },
+  }];
+
+  const html = api.renderCapture();
+  assert.match(html, /已识别过/);
+  assert.match(html, /打开已有记录/);
+  assert.match(html, /仍要重新识别/);
+  assert.doesNotMatch(html, /data-action="upload-candidate" data-index="0"/);
 });
 
 test('candidate upload failures explain the manual upload fallback', () => {
