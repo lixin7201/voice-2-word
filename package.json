@@ -8,6 +8,7 @@
     "dev": "node server/index.js",
     "package:extension": "node scripts/package-extension.mjs",
     "package:extension-crx": "node scripts/package-extension-crx.mjs",
+    "package:launcher": "node scripts/package-extension-launcher.mjs",
     "test": "node --test server/*.test.js server/**/*.test.js",
     "check": "node --check server/index.js && node --check server/app.js && node --check server/lib/*.js && node --check background.js && node --check sidepanel.js && node --check options.js"
   },

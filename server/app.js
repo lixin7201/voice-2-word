@@ -187,6 +187,11 @@ async function routeRequest(req, res, store, config) {
     return;
   }
 
+  if (['GET', 'HEAD'].includes(req.method) && pathname.startsWith('/releases/launcher/')) {
+    serveReleaseFile(pathname, '/releases/launcher/', path.join(process.cwd(), 'releases', 'launcher'), req.method, res);
+    return;
+  }
+
   const avatarMatch = pathname.match(/^\/uploads\/avatars\/([^/]+)$/);
   if (avatarMatch && req.method === 'GET') {
     serveLocalAvatar(avatarMatch[1], config, res);
@@ -2627,7 +2632,7 @@ function releaseContentType(ext) {
   if (ext === 'crx') return 'application/x-chrome-extension';
   if (ext === 'mobileconfig') return 'application/x-apple-aspen-config';
   if (ext === 'plist') return 'application/xml; charset=utf-8';
-  if (ext === 'reg' || ext === 'md') return 'text/plain; charset=utf-8';
+  if (ext === 'reg' || ext === 'md' || ext === 'txt' || ext === 'command' || ext === 'cmd') return 'text/plain; charset=utf-8';
   return 'application/octet-stream';
 }
 
