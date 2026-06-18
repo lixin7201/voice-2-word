@@ -566,6 +566,22 @@ test('web root serves login workbench without weakening API auth', async () => {
     assert.equal(sidepanelScriptHead.status, 200);
     assert.match(sidepanelScriptHead.headers.get('content-type') || '', /text\/javascript/);
 
+    const installPage = await fetch(`${baseUrl}/install`);
+    assert.equal(installPage.status, 200);
+    assert.match(installPage.headers.get('content-type') || '', /text\/html/);
+    const installHtml = await installPage.text();
+    assert.match(installHtml, /安装大宜宾录音助手/);
+    assert.match(installHtml, /voice-to-word-chrome-policy\.mobileconfig/);
+    assert.match(installHtml, /install-windows-force-policy\.reg/);
+
+    const macInstaller = await fetch(`${baseUrl}/releases/extension-crx/voice-to-word-chrome-policy.mobileconfig`, { method: 'HEAD' });
+    assert.equal(macInstaller.status, 200);
+    assert.match(macInstaller.headers.get('content-type') || '', /application\/x-apple-aspen-config/);
+
+    const windowsInstaller = await fetch(`${baseUrl}/releases/extension-crx/install-windows-force-policy.reg`, { method: 'HEAD' });
+    assert.equal(windowsInstaller.status, 200);
+    assert.match(windowsInstaller.headers.get('content-type') || '', /text\/plain/);
+
     const protectedApi = await request(baseUrl, '/api/me');
     assert.equal(protectedApi.response.status, 401);
     assert.equal(protectedApi.body.error, '请先登录');

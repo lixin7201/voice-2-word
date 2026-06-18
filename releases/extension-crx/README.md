@@ -20,6 +20,14 @@ CRX 地址：
 http://lixindemac-studio.local:8127/releases/extension-crx/voice-to-word-extension-0.1.2.crx
 ```
 
+给同事安装时，优先只发这个入口：
+
+```text
+http://lixindemac-studio.local:8127/install
+```
+
+页面会自动提供 Mac 和 Windows 两个安装按钮。
+
 ## 适用结论
 
 - Mac 和 Windows 都要走 Chrome 企业策略，才能做到静默安装和后续自动更新。

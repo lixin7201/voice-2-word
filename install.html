@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>安装大宜宾录音助手</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: #172033;
+      background: #f4f7fb;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 32px 16px;
+    }
+    main {
+      width: min(760px, 100%);
+      background: #fff;
+      border: 1px solid #dbe4ef;
+      border-radius: 8px;
+      box-shadow: 0 24px 70px rgb(33 45 70 / 12%);
+      padding: 32px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 30px;
+      line-height: 1.2;
+    }
+    .lead {
+      margin: 0 0 26px;
+      color: #526070;
+      line-height: 1.7;
+    }
+    .choices {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+    .choice {
+      display: block;
+      min-height: 136px;
+      padding: 20px;
+      border: 1px solid #cbd7e6;
+      border-radius: 8px;
+      color: inherit;
+      text-decoration: none;
+      background: #f8fbff;
+    }
+    .choice strong {
+      display: block;
+      margin-bottom: 10px;
+      font-size: 22px;
+    }
+    .choice span {
+      display: block;
+      color: #526070;
+      line-height: 1.55;
+    }
+    .choice:hover {
+      border-color: #2e7bbd;
+      background: #eef7ff;
+    }
+    ol {
+      margin: 0;
+      padding-left: 22px;
+      color: #39495d;
+      line-height: 1.8;
+    }
+    .note {
+      margin-top: 24px;
+      padding: 14px 16px;
+      border-radius: 8px;
+      background: #fff7e6;
+      color: #735013;
+      line-height: 1.7;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: .95em;
+    }
+    @media (max-width: 640px) {
+      main {
+        padding: 24px;
+      }
+      .choices {
+        grid-template-columns: 1fr;
+      }
+      h1 {
+        font-size: 26px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>安装大宜宾录音助手</h1>
+    <p class="lead">第一次安装后，以后插件会自动更新。请选择你的电脑系统，下载后按提示安装。</p>
+
+    <div class="choices">
+      <a class="choice" href="/releases/extension-crx/voice-to-word-chrome-policy.mobileconfig">
+        <strong>我是 Mac 电脑</strong>
+        <span>下载配置文件，打开后到系统设置里点安装。</span>
+      </a>
+      <a class="choice" href="/releases/extension-crx/install-windows-force-policy.reg">
+        <strong>我是 Windows 电脑</strong>
+        <span>下载注册表文件，用管理员权限打开，提示都点是。</span>
+      </a>
+    </div>
+
+    <ol>
+      <li>安装前先关闭 Chrome，或安装完成后完全退出 Chrome 再重新打开。</li>
+      <li>如果之前装过旧版录音助手，在 <code>chrome://extensions</code> 删除旧版。</li>
+      <li>重新打开 Chrome 后，看到“大宜宾录音助手”就可以登录使用。</li>
+    </ol>
+
+    <div class="note">
+      如果电脑提示需要管理员密码，请联系管理员帮忙点一次。以后新版会自动更新，不需要重复安装。
+    </div>
+  </main>
+</body>
+</html>

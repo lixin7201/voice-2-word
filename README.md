@@ -113,6 +113,14 @@ GET /api/extension/latest
 
 ### CRX 自动更新模式
 
+给同事安装时，优先只发这个入口：
+
+```text
+http://lixindemac-studio.local:8127/install
+```
+
+页面会自动提供 Mac 和 Windows 两个安装按钮。
+
 当前已准备好 `0.1.2` 的 CRX 自动更新包：
 
 ```text

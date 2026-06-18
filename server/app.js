@@ -58,6 +58,8 @@ const SUPPORTED_AVATAR_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp']);
 const WEB_ASSETS = new Map([
   ['/', { file: 'webapp.html', contentType: 'text/html; charset=utf-8' }],
   ['/app', { file: 'webapp.html', contentType: 'text/html; charset=utf-8' }],
+  ['/install', { file: 'install.html', contentType: 'text/html; charset=utf-8' }],
+  ['/install.html', { file: 'install.html', contentType: 'text/html; charset=utf-8' }],
   ['/webapp.html', { file: 'webapp.html', contentType: 'text/html; charset=utf-8' }],
   ['/webapp.css', { file: 'webapp.css', contentType: 'text/css; charset=utf-8' }],
   ['/sidepanel.css', { file: 'sidepanel.css', contentType: 'text/css; charset=utf-8' }],
@@ -2561,15 +2563,7 @@ function serveReleaseFile(pathname, prefix, releaseDir, method, res) {
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) throw httpError(404, '发布文件不存在');
   const ext = safeExtension(fileName);
   res.writeHead(200, {
-    'Content-Type': ext === 'json'
-      ? 'application/json; charset=utf-8'
-      : ext === 'zip'
-        ? 'application/zip'
-        : ext === 'xml'
-          ? 'application/xml; charset=utf-8'
-          : ext === 'crx'
-            ? 'application/x-chrome-extension'
-        : 'application/octet-stream',
+    'Content-Type': releaseContentType(ext),
     'Cache-Control': 'no-store',
     'Content-Length': fs.statSync(filePath).size,
   });
@@ -2624,6 +2618,17 @@ function originFromUrl(value) {
 
 function safeExtension(fileName) {
   return String(fileName).split('.').pop().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function releaseContentType(ext) {
+  if (ext === 'json') return 'application/json; charset=utf-8';
+  if (ext === 'zip') return 'application/zip';
+  if (ext === 'xml') return 'application/xml; charset=utf-8';
+  if (ext === 'crx') return 'application/x-chrome-extension';
+  if (ext === 'mobileconfig') return 'application/x-apple-aspen-config';
+  if (ext === 'plist') return 'application/xml; charset=utf-8';
+  if (ext === 'reg' || ext === 'md') return 'text/plain; charset=utf-8';
+  return 'application/octet-stream';
 }
 
 function defaultRecordTitle(sourceType) {
