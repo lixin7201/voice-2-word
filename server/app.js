@@ -60,8 +60,24 @@ const WEB_ASSETS = new Map([
   ['/app', { file: 'webapp.html', contentType: 'text/html; charset=utf-8' }],
   ['/install', { file: 'install.html', contentType: 'text/html; charset=utf-8' }],
   ['/install.html', { file: 'install.html', contentType: 'text/html; charset=utf-8' }],
+  ['/install-assets/login.png', { file: 'install-assets/login.png', contentType: 'image/png' }],
+  ['/install-assets/dashboard.png', { file: 'install-assets/dashboard.png', contentType: 'image/png' }],
+  ['/install-assets/upload.png', { file: 'install-assets/upload.png', contentType: 'image/png' }],
+  ['/install-assets/upload-settings.png', { file: 'install-assets/upload-settings.png', contentType: 'image/png' }],
+  ['/install-assets/capture-guide.png', { file: 'install-assets/capture-guide.png', contentType: 'image/png' }],
+  ['/install-assets/capture-found.png', { file: 'install-assets/capture-found.png', contentType: 'image/png' }],
+  ['/install-assets/history.png', { file: 'install-assets/history.png', contentType: 'image/png' }],
+  ['/install-assets/summary.png', { file: 'install-assets/summary.png', contentType: 'image/png' }],
+  ['/install-assets/transcript.png', { file: 'install-assets/transcript.png', contentType: 'image/png' }],
+  ['/install-assets/followup.png', { file: 'install-assets/followup.png', contentType: 'image/png' }],
+  ['/install-assets/notes.png', { file: 'install-assets/notes.png', contentType: 'image/png' }],
+  ['/install-assets/export.png', { file: 'install-assets/export.png', contentType: 'image/png' }],
+  ['/install-assets/profile.png', { file: 'install-assets/profile.png', contentType: 'image/png' }],
   ['/webapp.html', { file: 'webapp.html', contentType: 'text/html; charset=utf-8' }],
   ['/webapp.css', { file: 'webapp.css', contentType: 'text/css; charset=utf-8' }],
+  ['/share.html', { file: 'share.html', contentType: 'text/html; charset=utf-8' }],
+  ['/share.css', { file: 'share.css', contentType: 'text/css; charset=utf-8' }],
+  ['/share.js', { file: 'share.js', contentType: 'text/javascript; charset=utf-8' }],
   ['/sidepanel.css', { file: 'sidepanel.css', contentType: 'text/css; charset=utf-8' }],
   ['/sidepanel.js', { file: 'sidepanel.js', contentType: 'text/javascript; charset=utf-8' }],
 ]);
@@ -190,6 +206,28 @@ async function routeRequest(req, res, store, config) {
   const avatarMatch = pathname.match(/^\/uploads\/avatars\/([^/]+)$/);
   if (avatarMatch && req.method === 'GET') {
     serveLocalAvatar(avatarMatch[1], config, res);
+    return;
+  }
+
+  if (['GET', 'HEAD'].includes(req.method) && /^\/s\/[^/]+$/.test(pathname)) {
+    serveWebAsset('/share.html', req.method, res);
+    return;
+  }
+
+  const sharedAudioMatch = pathname.match(/^\/api\/shared\/([^/]+)\/audio$/);
+  if (sharedAudioMatch && ['GET', 'HEAD'].includes(req.method)) {
+    const { share, record } = requireActiveShare(sharedAudioMatch[1], store, runtimeConfig);
+    if (!share.include_audio) throw httpError(403, '分享链接未包含录音');
+    recordShareAccess(store, share, req, 'audio');
+    serveRecordAudio(req, res, record, runtimeConfig);
+    return;
+  }
+
+  const sharedDataMatch = pathname.match(/^\/api\/shared\/([^/]+)$/);
+  if (sharedDataMatch && req.method === 'GET') {
+    const { share, record } = requireActiveShare(sharedDataMatch[1], store, runtimeConfig);
+    recordShareAccess(store, share, req, 'view');
+    sendJson(res, 200, serializeSharedRecord(share, record, store, runtimeConfig));
     return;
   }
 
@@ -570,6 +608,40 @@ async function routeRequest(req, res, store, config) {
     return;
   }
 
+  const shareLinksMatch = pathname.match(/^\/api\/records\/([^/]+)\/share-links$/);
+  if (shareLinksMatch && req.method === 'GET') {
+    const record = requireRecord(shareLinksMatch[1], store);
+    ensureCanViewRecord(auth.employee, record, store);
+    sendJson(res, 200, {
+      shares: shareLinksForRecord(record.id, store)
+        .map((share) => serializeShareLink(share, runtimeConfig)),
+    });
+    return;
+  }
+
+  if (shareLinksMatch && req.method === 'POST') {
+    const record = requireRecord(shareLinksMatch[1], store);
+    ensureCanShareRecord(auth.employee, record, store);
+    const body = await readJson(req);
+    const share = createRecordShareLink(record, auth.employee, body, store, runtimeConfig);
+    addAudit(store, auth.employee.id, 'create_share_link', 'audio_record', record.id, shareAuditMetadata(share));
+    sendJson(res, 201, { share: serializeShareLink(share, runtimeConfig) });
+    return;
+  }
+
+  const shareLinkMatch = pathname.match(/^\/api\/share-links\/([^/]+)$/);
+  if (shareLinkMatch && ['DELETE', 'PATCH'].includes(req.method)) {
+    const share = requireShareLink(shareLinkMatch[1], store);
+    const record = requireRecord(share.audio_record_id, store);
+    ensureCanManageShareLink(auth.employee, share, record, store);
+    const revoked = store.update('record_share_links', share.id, {
+      revoked_at: share.revoked_at || new Date().toISOString(),
+    });
+    addAudit(store, auth.employee.id, 'revoke_share_link', 'audio_record', record.id, { shareId: share.id });
+    sendJson(res, 200, { share: serializeShareLink(revoked, runtimeConfig) });
+    return;
+  }
+
   const exportMatch = pathname.match(/^\/api\/records\/([^/]+)\/export$/);
   if (exportMatch && req.method === 'POST') {
     const record = requireRecord(exportMatch[1], store);
@@ -837,6 +909,206 @@ function authenticateExportDownload(req, store, config, exportFileId) {
   return { employee, exportFile };
 }
 
+function createRecordShareLink(record, employee, body, store, config) {
+  const options = normalizeShareOptions(body, record, store);
+  const id = crypto.randomUUID();
+  const token = shareTokenForId(id, config);
+  return store.insert('record_share_links', {
+    id,
+    audio_record_id: record.id,
+    created_by: employee.id,
+    token_hash: shareTokenHash(token),
+    include_audio: options.includeAudio,
+    include_transcript: options.includeTranscript,
+    include_summary: options.includeSummary,
+    include_overview_card: options.includeOverviewCard,
+    include_mind_map: options.includeMindMap,
+    allow_download: options.allowDownload,
+    expires_at: new Date(Date.now() + options.expiresInDays * 24 * 60 * 60 * 1000).toISOString(),
+    revoked_at: '',
+    access_count: 0,
+    last_accessed_at: '',
+    title_override: options.titleOverride,
+  });
+}
+
+function normalizeShareOptions(body = {}, record, store) {
+  const includeAudio = Boolean(body.includeAudio);
+  const includeTranscript = Boolean(body.includeTranscript);
+  const includeSummary = Boolean(body.includeSummary);
+  const includeOverviewCard = Boolean(body.includeOverviewCard);
+  const includeMindMap = Boolean(body.includeMindMap);
+  if (!includeAudio && !includeTranscript && !includeSummary && !includeOverviewCard && !includeMindMap) {
+    throw httpError(400, '请至少选择一项分享内容');
+  }
+  if (includeAudio && !record.original_file_name) throw httpError(400, '这条记录还没有可分享的录音');
+  if (includeTranscript && !hasTranscriptForRecord(record.id, store)) throw httpError(400, '逐字稿还没有生成，暂不能分享');
+  const summary = summaryForRecord(record.id, store);
+  if ((includeSummary || includeOverviewCard || includeMindMap) && !isSummaryUsable(summary)) {
+    throw httpError(409, 'AI 总结未成功，暂不能分享总结。请先重新生成总结。');
+  }
+  const expiresInDays = Math.min(30, Math.max(1, Number.parseInt(body.expiresInDays, 10) || 7));
+  return {
+    includeAudio,
+    includeTranscript,
+    includeSummary,
+    includeOverviewCard,
+    includeMindMap,
+    allowDownload: Boolean(body.allowDownload),
+    expiresInDays,
+    titleOverride: String(body.titleOverride || '').trim().slice(0, 80),
+  };
+}
+
+function hasTranscriptForRecord(recordId, store) {
+  const transcript = store.table('transcripts').find((item) => item.audio_record_id === recordId);
+  return Boolean(transcript?.corrected_text || transcript?.raw_text || (Array.isArray(transcript?.segments_json) && transcript.segments_json.length));
+}
+
+function shareLinksForRecord(recordId, store) {
+  return store.table('record_share_links')
+    .filter((share) => share.audio_record_id === recordId)
+    .sort((left, right) => String(right.created_at).localeCompare(String(left.created_at)));
+}
+
+function requireShareLink(id, store) {
+  const share = store.findById('record_share_links', id);
+  if (!share) throw httpError(404, '分享链接不存在');
+  return share;
+}
+
+function requireActiveShare(rawToken, store, config) {
+  const token = safeDecodeURIComponent(rawToken);
+  const shareId = token.split('.')[0] || '';
+  const share = shareId ? store.findById('record_share_links', shareId) : null;
+  if (!share || !constantTimeEqual(share.token_hash, shareTokenHash(token)) || token !== shareTokenForId(share.id, config)) {
+    throw httpError(404, '分享链接不存在');
+  }
+  if (share.revoked_at) throw httpError(410, '分享链接已被撤销。');
+  if (Date.parse(share.expires_at || '') <= Date.now()) throw httpError(410, '分享链接已过期，请联系分享人重新生成。');
+  const record = store.findById('audio_records', share.audio_record_id);
+  if (!record) throw httpError(410, '分享的录音记录已删除。');
+  return { share, record };
+}
+
+function safeDecodeURIComponent(value) {
+  try {
+    return decodeURIComponent(String(value || ''));
+  } catch {
+    return '';
+  }
+}
+
+function serializeShareLink(share, config) {
+  return {
+    id: share.id,
+    url: shareUrlForLink(share, config),
+    includeAudio: Boolean(share.include_audio),
+    includeTranscript: Boolean(share.include_transcript),
+    includeSummary: Boolean(share.include_summary),
+    includeOverviewCard: Boolean(share.include_overview_card),
+    includeMindMap: Boolean(share.include_mind_map),
+    allowDownload: Boolean(share.allow_download),
+    expiresAt: share.expires_at || '',
+    revokedAt: share.revoked_at || '',
+    accessCount: Number(share.access_count || 0),
+    lastAccessedAt: share.last_accessed_at || '',
+    titleOverride: share.title_override || '',
+    createdAt: share.created_at || '',
+  };
+}
+
+function serializeSharedRecord(share, record, store, config) {
+  const token = encodeURIComponent(shareTokenForId(share.id, config));
+  const transcript = store.table('transcripts').find((item) => item.audio_record_id === record.id) || null;
+  const summary = summaryForRecord(record.id, store);
+  const payload = {
+    title: share.title_override || record.title || record.original_file_name || '录音分享',
+    createdAt: record.created_at || '',
+    expiresAt: share.expires_at || '',
+    includes: {
+      audio: Boolean(share.include_audio),
+      transcript: Boolean(share.include_transcript),
+      summary: Boolean(share.include_summary),
+      overviewCard: Boolean(share.include_overview_card),
+      mindMap: Boolean(share.include_mind_map),
+    },
+    allowDownload: Boolean(share.allow_download),
+  };
+  if (share.include_audio) {
+    payload.audio = {
+      url: `/api/shared/${token}/audio`,
+      mimeType: record.mime_type || '',
+      fileSize: record.file_size || 0,
+      durationSeconds: record.duration_seconds || 0,
+    };
+  }
+  if (share.include_transcript && transcript) {
+    payload.transcript = {
+      text: transcript.corrected_text || transcript.raw_text || '',
+      segments: Array.isArray(transcript.segments_json) ? transcript.segments_json : [],
+    };
+  }
+  if ((share.include_summary || share.include_overview_card || share.include_mind_map) && isSummaryUsable(summary)) {
+    payload.summary = {
+      markdown: share.include_summary ? summary.summary_markdown || '' : '',
+      overviewCard: share.include_summary || share.include_overview_card ? summary.overview_card_json || {} : null,
+      mindMap: share.include_summary || share.include_mind_map ? normalizeMindMap(summary.mind_map_json, record.title) || {} : null,
+    };
+  }
+  return payload;
+}
+
+function recordShareAccess(store, share, req, eventType) {
+  const now = new Date().toISOString();
+  store.update('record_share_links', share.id, {
+    access_count: Number(share.access_count || 0) + 1,
+    last_accessed_at: now,
+  });
+  store.insert('record_share_access_logs', {
+    share_link_id: share.id,
+    event_type: eventType,
+    ip_hash: shareIpHash(req),
+    user_agent: String(req.headers['user-agent'] || '').slice(0, 300),
+  });
+}
+
+function shareTokenForId(id, config) {
+  const signature = crypto.createHmac('sha256', config.jwtSecret)
+    .update(`record-share:${id}`)
+    .digest('base64url');
+  return `${id}.${signature}`;
+}
+
+function shareTokenHash(token) {
+  return crypto.createHash('sha256').update(String(token || '')).digest('hex');
+}
+
+function shareUrlForLink(share, config) {
+  return `${String(config.publicBaseUrl || '').replace(/\/$/, '')}/s/${encodeURIComponent(shareTokenForId(share.id, config))}`;
+}
+
+function constantTimeEqual(left, right) {
+  const a = Buffer.from(String(left || ''));
+  const b = Buffer.from(String(right || ''));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function shareIpHash(req) {
+  const raw = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
+  return raw ? crypto.createHash('sha256').update(raw).digest('hex') : '';
+}
+
+function shareAuditMetadata(share) {
+  return {
+    shareId: share.id,
+    includeAudio: Boolean(share.include_audio),
+    includeTranscript: Boolean(share.include_transcript),
+    includeSummary: Boolean(share.include_summary),
+    expiresAt: share.expires_at || '',
+  };
+}
+
 function serializeEmployee(employee, store) {
   return {
     id: employee.id,
@@ -1101,6 +1373,17 @@ function canViewRecord(employee, record, store) {
 
 function ensureCanViewRecord(employee, record, store) {
   if (!canViewRecord(employee, record, store)) throw httpError(403, '没有权限查看该录音');
+}
+
+function ensureCanShareRecord(employee, record, store) {
+  if (!canViewRecord(employee, record, store)) throw httpError(403, '没有权限分享该录音');
+}
+
+function ensureCanManageShareLink(employee, share, record, store) {
+  if (share.created_by === employee.id || ['admin', 'boss'].includes(employee.global_role)) return;
+  if (record.owner_employee_id === employee.id) return;
+  if (canViewRecord(employee, record, store) && share.created_by === employee.id) return;
+  throw httpError(403, '没有权限管理该分享链接');
 }
 
 function ensureCanEditRecord(employee, record, store) {
@@ -1606,6 +1889,7 @@ async function purgeRecord(record, employee, store, config) {
   }
 
   const localFiles = deleteLocalRecordFiles(record, exportFiles, config);
+  deleteShareRowsForAudioRecord(store, record.id);
   for (const tableName of ['transcripts', 'summaries', 'followup_forms', 'record_notes', 'record_processing_events', 'export_files']) {
     deleteRowsForAudioRecord(store, tableName, record.id);
   }
@@ -1644,6 +1928,19 @@ function deleteRowsForAudioRecord(store, tableName, audioRecordId) {
     }
   }
   if (changed) store.save();
+}
+
+function deleteShareRowsForAudioRecord(store, audioRecordId) {
+  const shareIds = store.table('record_share_links')
+    .filter((share) => share.audio_record_id === audioRecordId)
+    .map((share) => share.id);
+  if (!shareIds.length) return;
+  const logs = store.table('record_share_access_logs');
+  for (let index = logs.length - 1; index >= 0; index -= 1) {
+    if (shareIds.includes(logs[index].share_link_id)) logs.splice(index, 1);
+  }
+  deleteRowsForAudioRecord(store, 'record_share_links', audioRecordId);
+  store.save();
 }
 
 function deleteLocalRecordFiles(record, exportFiles, config) {

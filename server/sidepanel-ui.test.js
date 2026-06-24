@@ -782,7 +782,32 @@ test('detail page renders horizontal tabs and keeps panel state', () => {
   assert.match(html, /data-detail-tab="mind_map"/);
   assert.match(html, /思维导图/);
   assert.match(html, /id="summary-section"/);
+  assert.match(html, /data-action="open-share-panel"/);
   assert.doesNotMatch(html, /<audio id="record-audio"/);
+
+  api.appState.sharePanelOpen = true;
+  api.appState.shareLinks = [{
+    id: 'share_1',
+    url: 'http://127.0.0.1:8137/s/share-token',
+    includeAudio: true,
+    includeTranscript: true,
+    includeSummary: true,
+    expiresAt: '2026-07-01T00:00:00.000Z',
+    accessCount: 2,
+  }];
+  const shareHtml = api.renderDetail();
+  assert.match(shareHtml, /分享链接/);
+  assert.match(shareHtml, /name="includeAudio" type="checkbox" checked/);
+  assert.match(shareHtml, /name="includeTranscript" type="checkbox" checked/);
+  assert.match(shareHtml, /name="includeSummary" type="checkbox" checked/);
+  assert.match(shareHtml, /data-action="create-share-link"/);
+  assert.match(shareHtml, /http:\/\/127\.0\.0\.1:8137\/s\/share-token/);
+  assert.match(shareHtml, /data-action="revoke-share-link"/);
+  api.appState.detail.summary.quality_status = 'fallback_template';
+  const fallbackShareHtml = api.renderDetail();
+  assert.match(fallbackShareHtml, /name="includeSummary" type="checkbox" disabled/);
+  api.appState.sharePanelOpen = false;
+  api.appState.detail.summary.quality_status = '';
 
   api.appState.detailTab = 'transcript';
   api.appState.audioError = '浏览器无法播放该格式，可下载录音后播放。';

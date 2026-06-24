@@ -3,152 +3,831 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>安装大宜宾录音助手</title>
+  <link rel="icon" href="data:,">
+  <title>大宜宾录音助手安装和使用教程</title>
   <style>
     :root {
       color-scheme: light;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
-      color: #172033;
-      background: #f4f7fb;
+      color: #13201c;
+      background: #eef5f2;
+      --green: #005c3b;
+      --teal: #0f8a6a;
+      --text: #13201c;
+      --muted: #51615c;
+      --line: #cbdad4;
+      --panel: #fff;
+      --paper: #f8fbfa;
+      --warn: #fff7e6;
     }
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
     body {
       margin: 0;
       min-height: 100vh;
-      display: grid;
-      place-items: center;
-      padding: 32px 16px;
+      background: linear-gradient(180deg, #eef7f4 0%, #f8fbfa 48%, #edf5f2 100%);
     }
+    a { color: inherit; }
     main {
-      width: min(760px, 100%);
-      background: #fff;
-      border: 1px solid #dbe4ef;
+      width: min(1100px, 100%);
+      margin: 0 auto;
+      padding: 24px 16px 52px;
+    }
+    .hero,
+    .toc,
+    .chapter,
+    .download-card,
+    .mini-card,
+    .callout,
+    figure {
+      border: 1px solid var(--line);
       border-radius: 8px;
-      box-shadow: 0 24px 70px rgb(33 45 70 / 12%);
-      padding: 32px;
+      background: var(--panel);
+      box-shadow: 0 18px 48px rgb(29 52 45 / 10%);
+    }
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(280px, .75fr);
+      gap: 18px;
+      align-items: stretch;
+      padding: 28px;
+    }
+    .eyebrow {
+      margin: 0 0 9px;
+      color: var(--green);
+      font-weight: 800;
+      letter-spacing: 0;
     }
     h1 {
-      margin: 0 0 8px;
-      font-size: 30px;
-      line-height: 1.2;
+      margin: 0;
+      font-size: clamp(30px, 5vw, 46px);
+      line-height: 1.12;
+      letter-spacing: 0;
     }
     .lead {
-      margin: 0 0 26px;
-      color: #526070;
-      line-height: 1.7;
+      margin: 12px 0 0;
+      max-width: 720px;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.75;
     }
-    .choices {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 14px;
-      margin-bottom: 24px;
+    .download-card {
+      padding: 18px;
+      background: #f5fbf8;
+      box-shadow: none;
     }
-    .choices.single {
-      grid-template-columns: 1fr;
+    .download-card h2,
+    .toc h2 {
+      margin: 0 0 10px;
+      font-size: 21px;
     }
     .choice {
       display: block;
-      min-height: 136px;
-      padding: 20px;
-      border: 1px solid #cbd7e6;
-      border-radius: 8px;
-      color: inherit;
+      margin: 14px 0;
+      padding: 15px 18px;
+      color: #fff;
+      text-align: center;
       text-decoration: none;
-      background: #f8fbff;
-    }
-    .choice strong {
-      display: block;
-      margin-bottom: 10px;
-      font-size: 22px;
-    }
-    .choice span {
-      display: block;
-      color: #526070;
-      line-height: 1.55;
-    }
-    .choice:hover {
-      border-color: #2e7bbd;
-      background: #eef7ff;
-    }
-    .choice.primary {
-      background: #eef7ff;
-      border-color: #2e7bbd;
-    }
-    ol {
-      margin: 0;
-      padding-left: 22px;
-      color: #39495d;
-      line-height: 1.8;
-    }
-    .note {
-      margin-top: 24px;
-      padding: 14px 16px;
       border-radius: 8px;
-      background: #fff7e6;
-      color: #735013;
+      background: var(--green);
+      font-weight: 800;
+      font-size: 18px;
+    }
+    .choice:hover { background: #00452d; }
+    .meta-line,
+    .note,
+    figcaption {
+      margin: 0;
+      color: var(--muted);
       line-height: 1.7;
+      font-size: 15px;
+      overflow-wrap: anywhere;
     }
     code {
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: .95em;
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      font-size: .96em;
+      background: #eef5f2;
+      border: 1px solid #d9e6e1;
+      border-radius: 6px;
+      padding: 2px 6px;
+      word-break: break-word;
     }
-    @media (max-width: 640px) {
-      main {
-        padding: 24px;
-      }
-      .choices {
+    .toc {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      margin-top: 14px;
+      padding: 16px;
+      box-shadow: 0 12px 34px rgb(29 52 45 / 8%);
+    }
+    .toc-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .toc a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 7px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      color: #20352f;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .toc a:hover {
+      border-color: var(--teal);
+      color: var(--green);
+    }
+    .chapter {
+      margin-top: 14px;
+      overflow: hidden;
+    }
+    .chapter > summary {
+      cursor: pointer;
+      list-style: none;
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      padding: 18px 20px;
+      background: #fff;
+    }
+    .chapter > summary::-webkit-details-marker { display: none; }
+    .num {
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      color: #fff;
+      background: var(--green);
+      font-weight: 800;
+    }
+    .summary-copy strong {
+      display: block;
+      margin-bottom: 3px;
+      color: var(--text);
+      font-size: 22px;
+      line-height: 1.25;
+    }
+    .summary-copy span {
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.5;
+    }
+    .chevron {
+      color: var(--green);
+      font-size: 20px;
+      transform: rotate(0deg);
+      transition: transform .16s ease;
+    }
+    .chapter[open] .chevron { transform: rotate(90deg); }
+    .chapter-body {
+      border-top: 1px solid var(--line);
+      padding: 18px 20px 22px;
+      background: rgba(248, 251, 250, .72);
+    }
+    .guide-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(260px, 380px);
+      gap: 16px;
+      align-items: start;
+    }
+    .guide-grid.wide-shot {
+      grid-template-columns: minmax(0, .92fr) minmax(320px, 1.08fr);
+    }
+    .text-block h3 {
+      margin: 0 0 9px;
+      font-size: 20px;
+    }
+    .text-block p {
+      margin: 0 0 10px;
+      color: #273834;
+      line-height: 1.75;
+    }
+    .text-block ol,
+    .text-block ul,
+    .mini-card ol,
+    .mini-card ul {
+      margin: 8px 0 0;
+      padding-left: 22px;
+      color: #273834;
+      line-height: 1.75;
+    }
+    li + li { margin-top: 4px; }
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .mini-card {
+      padding: 15px;
+      background: var(--paper);
+      box-shadow: none;
+    }
+    .mini-card strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--text);
+      font-size: 18px;
+    }
+    .mini-card p {
+      margin: 0;
+      color: #273834;
+      line-height: 1.7;
+    }
+    .callout {
+      margin: 14px 0 0;
+      padding: 13px 15px;
+      color: #6d501a;
+      background: var(--warn);
+      box-shadow: none;
+      line-height: 1.7;
+    }
+    figure {
+      margin: 0;
+      padding: 10px;
+      background: #fff;
+      box-shadow: none;
+    }
+    figure img {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-height: 300px;
+      object-fit: contain;
+      border: 1px solid #dfe9e5;
+      border-radius: 6px;
+      background: #f6faf8;
+    }
+    figure.tall img { max-height: 420px; }
+    figure.wide img { max-height: 330px; }
+    figcaption { margin-top: 8px; }
+    .divider {
+      height: 1px;
+      margin: 16px 0;
+      background: var(--line);
+    }
+    .subdetails {
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+    }
+    .subdetails > summary {
+      cursor: pointer;
+      padding: 12px 14px;
+      color: var(--green);
+      font-weight: 800;
+    }
+    .subdetails > div {
+      border-top: 1px solid var(--line);
+      padding: 12px 14px;
+    }
+    .small { font-size: 13px; }
+    @media (max-width: 860px) {
+      main { padding: 14px 10px 42px; }
+      .hero,
+      .guide-grid,
+      .guide-grid.wide-shot,
+      .mini-grid {
         grid-template-columns: 1fr;
       }
-      h1 {
-        font-size: 26px;
+      .hero,
+      .chapter-body {
+        padding: 16px;
+      }
+      .toc {
+        position: static;
+      }
+      .chapter > summary {
+        padding: 15px;
+      }
+      figure img,
+      figure.tall img,
+      figure.wide img {
+        max-height: 360px;
       }
     }
   </style>
 </head>
 <body>
   <main>
-    <h1>安装大宜宾录音助手</h1>
-    <p class="lead">不需要谷歌商店，也不需要 VPN。下载最新版插件压缩包，解压后在 Chrome 里加载即可。</p>
+    <section class="hero">
+      <div>
+        <p class="eyebrow">普通账号小白版</p>
+        <h1>大宜宾录音助手安装和使用教程</h1>
+        <p class="lead">先安装 Chrome 插件，再登录，最后上传录音或监听网页录音。普通用户不用配置模型、转写、存储等参数。</p>
+      </div>
+      <aside class="download-card">
+        <h2>下载入口</h2>
+        <p class="meta-line">本页地址：<br><code>http://lixindemac-studio.local:8127/install</code></p>
+        <a id="downloadLink" class="choice" href="releases/extension/voice-to-word-extension-0.1.4.zip">下载最新版插件压缩包</a>
+        <p id="downloadMeta" class="meta-line">当前版本 0.1.4。下载后先解压，再到 Chrome 里加载解压后的文件夹。</p>
+        <p id="shaText" class="meta-line small"></p>
+      </aside>
+    </section>
 
-    <div class="choices single">
-      <a id="downloadLink" class="choice primary" href="/releases/extension/voice-to-word-extension-0.1.2.zip">
-        <strong>下载最新版插件压缩包</strong>
-        <span id="downloadMeta">当前版本 0.1.2。下载后解压，再到 Chrome 扩展管理页加载解压后的文件夹。</span>
-      </a>
-    </div>
+    <nav class="toc" aria-label="教程目录">
+      <h2>目录</h2>
+      <div class="toc-grid">
+        <a href="#quick">30 秒流程</a>
+        <a href="#install">安装插件</a>
+        <a href="#login">登录</a>
+        <a href="#dashboard">认识首页</a>
+        <a href="#upload">上传录音</a>
+        <a href="#capture">监听网页录音</a>
+        <a href="#records">结果页</a>
+        <a href="#share">分享链接</a>
+        <a href="#profile">个人资料</a>
+        <a href="#update">更新插件</a>
+        <a href="#faq">常见问题</a>
+      </div>
+    </nav>
 
-    <ol>
-      <li>下载 zip 后先解压到一个固定文件夹。</li>
-      <li>打开 Chrome 的 <code>chrome://extensions</code>。</li>
-      <li>打开右上角“开发者模式”。</li>
-      <li>点“加载已解压的扩展程序”，选择刚才解压出来的文件夹。</li>
-      <li>以后有新版时，点插件里的更新提示下载新版 zip，解压后覆盖旧文件夹，再在扩展管理页点“重新加载”。</li>
-    </ol>
+    <details id="quick" class="chapter" open>
+      <summary>
+        <span class="num">0</span>
+        <span class="summary-copy"><strong>30 秒最短流程</strong><span>只想先用起来，照这 6 步走。</span></span>
+        <span class="chevron">›</span>
+      </summary>
+      <div class="chapter-body">
+        <div class="mini-grid">
+          <div class="mini-card"><strong>1. 下载 zip</strong><p>点本页上方“下载最新版插件压缩包”。</p></div>
+          <div class="mini-card"><strong>2. 解压</strong><p>不要直接装 zip，要先解压成文件夹。</p></div>
+          <div class="mini-card"><strong>3. 打开扩展页</strong><p>Chrome 地址栏输入 <code>chrome://extensions</code>。</p></div>
+          <div class="mini-card"><strong>4. 加载文件夹</strong><p>打开“开发者模式”，点“加载已解压的扩展程序”。</p></div>
+          <div class="mini-card"><strong>5. 登录</strong><p>输入自己的花名/工号；默认密码是 <code>dayibin</code>。</p></div>
+          <div class="mini-card"><strong>6. 上传或监听</strong><p>有文件就“上传录音”，网页里播放的录音就用“监听”。</p></div>
+        </div>
+      </div>
+    </details>
 
-    <div class="note">
-      浏览器不能自动把 zip 下载到旧插件目录，也不能自动解压覆盖。这一步需要人工解压覆盖，或者重新选择新文件夹加载。
-    </div>
+    <details id="install" class="chapter">
+      <summary>
+        <span class="num">1</span>
+        <span class="summary-copy"><strong>第一次安装插件</strong><span>下载、解压、加载到 Chrome，一步一步来。</span></span>
+        <span class="chevron">›</span>
+      </summary>
+      <div class="chapter-body">
+        <div class="text-block">
+          <h3>安装前确认</h3>
+          <ul>
+            <li>电脑已经安装 Chrome 浏览器。</li>
+            <li>能打开本教程页，说明基本连上办公室服务。</li>
+            <li>已经知道自己的花名/工号；默认密码是 <code>dayibin</code>。</li>
+          </ul>
+        </div>
+        <div class="divider"></div>
+        <div class="mini-grid">
+          <div class="mini-card">
+            <strong>下载并解压</strong>
+            <ol>
+              <li>点击本页上方“下载最新版插件压缩包”。</li>
+              <li>下载后找到 <code>voice-to-word-extension-0.1.4.zip</code> 这类文件。</li>
+              <li>Windows 右键选择“全部解压缩”；Mac 双击 zip。</li>
+              <li>把解压出的文件夹放到固定位置，不要放在微信临时目录。</li>
+            </ol>
+          </div>
+          <div class="mini-card">
+            <strong>加载到 Chrome</strong>
+            <ol>
+              <li>Chrome 地址栏输入 <code>chrome://extensions</code>，按回车。</li>
+              <li>打开右上角“开发者模式”。</li>
+              <li>点击“加载已解压的扩展程序”。</li>
+              <li>选择刚才解压出来的插件文件夹。</li>
+              <li>看到“大宜宾录音助手”卡片，就安装成功。</li>
+            </ol>
+          </div>
+        </div>
+        <div class="callout">重要：以后不要删除或移动这个解压文件夹。Chrome 加载的是这个文件夹，不是 zip。</div>
+      </div>
+    </details>
+
+    <details id="login" class="chapter">
+      <summary>
+        <span class="num">2</span>
+        <span class="summary-copy"><strong>登录插件</strong><span>普通账号只填花名/工号和密码，不用配置参数。</span></span>
+        <span class="chevron">›</span>
+      </summary>
+      <div class="chapter-body">
+        <div class="guide-grid">
+          <div class="text-block">
+            <h3>打开和登录</h3>
+            <ol>
+              <li>点击 Chrome 右上角拼图图标，找到“大宜宾录音助手”。</li>
+              <li>点击插件，浏览器右侧会打开侧边栏。</li>
+              <li>“服务地址”一般不用改。</li>
+              <li>“工号/花名”输入自己的花名或工号。</li>
+              <li>“密码”输入 <code>dayibin</code>。如果管理员给过新密码，就用新密码。</li>
+              <li>点击“登录”。</li>
+            </ol>
+            <div class="callout">建议登录后先把插件固定到右上角：点拼图图标，再点“大宜宾录音助手”旁边的小图钉。</div>
+          </div>
+          <figure class="tall">
+            <img src="install-assets/login.png" alt="登录页截图">
+            <figcaption>登录页：服务地址一般不用改，默认密码是 dayibin。</figcaption>
+          </figure>
+        </div>
+      </div>
+    </details>
+
+    <details id="dashboard" class="chapter">
+      <summary>
+        <span class="num">3</span>
+        <span class="summary-copy"><strong>认识首页</strong><span>首页能看最近记录，也能进入上传和历史。</span></span>
+        <span class="chevron">›</span>
+      </summary>
+      <div class="chapter-body">
+        <div class="guide-grid wide-shot">
+          <div class="text-block">
+            <h3>首页常用入口</h3>
+            <ul>
+              <li>“上传录音文件”：手里有 mp3、m4a、wav 等文件时点这里。</li>
+              <li>“查看历史记录”：找以前处理过的录音。</li>
+              <li>“最近历史”：可以直接点某一条查看结果。</li>
+              <li>右上角头像/名字：进入个人资料、修改密码、退出登录。</li>
+            </ul>
+          </div>
+          <figure class="wide">
+            <img src="install-assets/dashboard.png" alt="首页截图">
+            <figcaption>普通账号首页：主要用上传、历史和最近记录。</figcaption>
+          </figure>
+        </div>
+      </div>
+    </details>
+
+    <details id="upload" class="chapter">
+      <summary>
+        <span class="num">4</span>
+        <span class="summary-copy"><strong>上传录音文件</strong><span>最稳的方式：先有录音文件，再上传生成纪要或跟单。</span></span>
+        <span class="chevron">›</span>
+      </summary>
+      <div class="chapter-body">
+        <div class="guide-grid wide-shot">
+          <div class="text-block">
+            <h3>上传步骤</h3>
+            <ol>
+              <li>点“上传录音文件”或顶部/侧边“上传”。</li>
+              <li>点“选择文件”，选择录音或视频文件。</li>
+              <li>填写“录音标题”，例如“6月客户电话沟通”。不填也可以，系统会先用文件名。</li>
+              <li>选择处理方式：会议记录选“会议纪要”；客户沟通、商机整理选“跟单信息”。</li>
+              <li>点击“上传并生成纪要”。</li>
+            </ol>
+            <p>支持 mp3、m4a、wav、aac、flac、ogg、opus、mp4、mov、webm。长录音会慢一些，上传后可以先离开，稍后到历史里查看。</p>
+          </div>
+          <figure class="wide">
+            <img src="install-assets/upload.png" alt="上传页截图">
+            <figcaption>上传页：选择文件、填标题、点上传开始识别。</figcaption>
+          </figure>
+        </div>
+        <div class="guide-grid" style="margin-top:14px">
+          <div class="text-block">
+            <h3>处理方式怎么选</h3>
+            <ul>
+              <li>会议纪要：适合会议、培训、复盘、讨论、电话会议。</li>
+              <li>跟单信息：适合客户跟进、招聘客户、红娘客户、商机沟通。</li>
+              <li>不确定时先选会议纪要，后面也可以重新生成。</li>
+            </ul>
+          </div>
+          <figure class="tall">
+            <img src="install-assets/upload-settings.png" alt="转写设置截图">
+            <figcaption>转写设置：普通账号只需要选“会议纪要”或“跟单信息”。</figcaption>
+          </figure>
+        </div>
+      </div>
+    </details>
+
+    <details id="capture" class="chapter">
+      <summary>
+        <span class="num">5</span>
+        <span class="summary-copy"><strong>监听网页录音</strong><span>录音在网页播放器里，不方便下载时用这个。</span></span>
+        <span class="chevron">›</span>
+      </summary>
+      <div class="chapter-body">
+        <div class="guide-grid wide-shot">
+          <div class="text-block">
+            <h3>先在网页里播放，再点监听</h3>
+            <ol>
+              <li>先打开保存录音的原网页，并确认自己已登录那个网页账号。</li>
+              <li>找到要识别的那条录音，先点播放。</li>
+              <li>打开“大宜宾录音助手”，点“监听”。</li>
+              <li>点“识别当前页录音”。</li>
+              <li>如果出现候选录音，填标题、选处理方式，再点“生成纪要”。</li>
+            </ol>
+          </div>
+          <figure class="wide">
+            <img src="install-assets/capture-guide.png" alt="监听流程示意图">
+            <figcaption>监听前提：原网页能播放，插件才更容易找到录音。</figcaption>
+          </figure>
+        </div>
+        <div class="guide-grid wide-shot" style="margin-top:14px">
+          <div class="text-block">
+            <h3>看到候选录音后</h3>
+            <ul>
+              <li>标记“当前录音”的通常就是最可能的一条。</li>
+              <li>标题可以改成人能看懂的名字。</li>
+              <li>点“生成纪要”后，去详情页等待转写和总结完成。</li>
+              <li>如果提示“需手动上传”，说明网页不允许直接读取，下载录音文件后改用上传。</li>
+            </ul>
+          </div>
+          <figure class="wide">
+            <img src="install-assets/capture-found.png" alt="监听发现录音示意图">
+            <figcaption>候选录音页：确认标题后点“生成纪要”。</figcaption>
+          </figure>
+        </div>
+      </div>
+    </details>
+
+    <details id="records" class="chapter">
+      <summary>
+        <span class="num">6</span>
+        <span class="summary-copy"><strong>查看结果、复制和下载</strong><span>历史、总结、逐字稿、跟单、备注、导出都在详情页。</span></span>
+        <span class="chevron">›</span>
+      </summary>
+      <div class="chapter-body">
+        <div class="guide-grid wide-shot">
+          <div class="text-block">
+            <h3>从历史打开记录</h3>
+            <ol>
+              <li>点“历史”。</li>
+              <li>找到录音标题，右侧显示“完成”说明可以看结果。</li>
+              <li>点那条记录进入详情页。</li>
+              <li>如果仍是“转写中/总结中”，点“刷新”或稍后再看。</li>
+            </ol>
+          </div>
+          <figure class="wide">
+            <img src="install-assets/history.png" alt="历史记录截图">
+            <figcaption>历史页：点某一条记录查看结果。</figcaption>
+          </figure>
+        </div>
+
+        <div class="divider"></div>
+        <div class="mini-grid">
+          <div class="mini-card">
+            <strong>总结</strong>
+            <p>适合直接复制到飞书、微信或文档。觉得结果不对，可以点“重新生成”。</p>
+          </div>
+          <div class="mini-card">
+            <strong>逐字稿</strong>
+            <p>完整文字记录，带时间点和说话人。可搜索关键词，也可以重新转写。</p>
+          </div>
+          <div class="mini-card">
+            <strong>跟单/备注</strong>
+            <p>客户沟通类录音会生成跟单字段。你可以补充或修改后保存。</p>
+          </div>
+          <div class="mini-card">
+            <strong>下载</strong>
+            <p>需要留档时，可下载 Markdown、TXT、DOCX、PDF 等文件。</p>
+          </div>
+        </div>
+
+        <details class="subdetails">
+          <summary>展开看“总结”截图和步骤</summary>
+          <div class="guide-grid wide-shot">
+            <div class="text-block">
+              <ol>
+                <li>进入详情后，默认先看“会议概览/总结”。</li>
+                <li>可以点“复制”，把总结粘贴到飞书。</li>
+                <li>如果总结不完整，点“重新生成”。</li>
+              </ol>
+            </div>
+            <figure class="wide">
+              <img src="install-assets/summary.png" alt="总结页截图">
+              <figcaption>总结页：先看结论，再复制或重新生成。</figcaption>
+            </figure>
+          </div>
+        </details>
+
+        <details class="subdetails">
+          <summary>展开看“逐字稿”截图和步骤</summary>
+          <div class="guide-grid">
+            <div class="text-block">
+              <ol>
+                <li>点“会议逐字稿”。</li>
+                <li>上方可以播放录音。</li>
+                <li>用“搜索逐字稿”查人名、客户名、关键词。</li>
+                <li>需要核对原话时，看每段前面的时间点。</li>
+              </ol>
+            </div>
+            <figure class="tall">
+              <img src="install-assets/transcript.png" alt="逐字稿截图">
+              <figcaption>逐字稿：带时间点和说话人，适合核对原话。</figcaption>
+            </figure>
+          </div>
+        </details>
+
+        <details class="subdetails">
+          <summary>展开看“跟单/备注/导出”截图和步骤</summary>
+          <div class="guide-grid wide-shot">
+            <div class="text-block">
+              <h3>跟单</h3>
+              <ul>
+                <li>点“跟单/备注”。</li>
+                <li>检查阶段、标签、企业/客户、状态和跟单内容。</li>
+                <li>有需要就修改，最后点“保存跟单修改”。</li>
+              </ul>
+            </div>
+            <figure class="wide">
+              <img src="install-assets/followup.png" alt="跟单截图">
+              <figcaption>跟单页：适合客户跟进、招聘客户、红娘客户。</figcaption>
+            </figure>
+          </div>
+          <div class="guide-grid" style="margin-top:14px">
+            <div class="text-block">
+              <h3>备注和导出</h3>
+              <ul>
+                <li>备注：写自己的补充说明，点“保存备注”。</li>
+                <li>导出：选择 Markdown、TXT、DOCX 或 PDF 下载。</li>
+                <li>只要是普通留档，优先下载 DOCX 或 PDF。</li>
+              </ul>
+            </div>
+            <div class="mini-grid">
+              <figure class="tall">
+                <img src="install-assets/notes.png" alt="备注截图">
+                <figcaption>备注：补充人工判断。</figcaption>
+              </figure>
+              <figure>
+                <img src="install-assets/export.png" alt="导出截图">
+                <figcaption>导出：下载文件留档。</figcaption>
+              </figure>
+            </div>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <details id="share" class="chapter">
+      <summary>
+        <span class="num">7</span>
+        <span class="summary-copy"><strong>分享链接</strong><span>把录音、逐字稿、总结按需分享给手机或同事查看。</span></span>
+        <span class="chevron">›</span>
+      </summary>
+      <div class="chapter-body">
+        <div class="mini-grid">
+          <div class="mini-card">
+            <strong>创建分享</strong>
+            <ol>
+              <li>打开一条已处理的录音详情。</li>
+              <li>点击标题下方的“分享”。</li>
+              <li>勾选要分享的内容：录音、逐字稿、总结。</li>
+              <li>选择有效期，默认 7 天。</li>
+              <li>点击“复制链接”。</li>
+            </ol>
+          </div>
+          <div class="mini-card">
+            <strong>手机查看</strong>
+            <ol>
+              <li>把链接发给同事或发到自己手机。</li>
+              <li>手机需要连接办公室同一个 Wi-Fi。</li>
+              <li>打开链接后可播放录音、查看逐字稿和总结。</li>
+              <li>链接过期或撤销后，别人就打不开。</li>
+            </ol>
+          </div>
+        </div>
+        <div class="callout">分享链接无需登录也能访问，所以只发给需要查看的人。只勾选“录音”时，对方不会看到逐字稿和总结；只勾选“总结”时，对方不会听到录音。</div>
+      </div>
+    </details>
+
+    <details id="profile" class="chapter">
+      <summary>
+        <span class="num">8</span>
+        <span class="summary-copy"><strong>个人资料和修改密码</strong><span>头像、名字、AI 偏好、密码都在右上角个人资料里。</span></span>
+        <span class="chevron">›</span>
+      </summary>
+      <div class="chapter-body">
+        <div class="guide-grid">
+          <div class="text-block">
+            <h3>修改个人资料</h3>
+            <ol>
+              <li>点击右上角头像/名字。</li>
+              <li>可以修改花名、头像底色、自我介绍。</li>
+              <li>“AI 生成偏好”可以写你希望纪要更关注什么，比如待办、风险、责任人。</li>
+              <li>点“保存个人资料”。</li>
+            </ol>
+            <h3>修改密码</h3>
+            <ol>
+              <li>输入旧密码。第一次通常是 <code>dayibin</code>。</li>
+              <li>输入新密码，再确认一遍。</li>
+              <li>点“保存密码”。</li>
+            </ol>
+          </div>
+          <figure class="tall">
+            <img src="install-assets/profile.png" alt="个人资料截图">
+            <figcaption>个人资料：普通用户可改资料、AI 偏好和密码。</figcaption>
+          </figure>
+        </div>
+      </div>
+    </details>
+
+    <details id="update" class="chapter">
+      <summary>
+        <span class="num">9</span>
+        <span class="summary-copy"><strong>以后有新版怎么更新</strong><span>下载新版 zip、解压、刷新扩展。</span></span>
+        <span class="chevron">›</span>
+      </summary>
+      <div class="chapter-body">
+        <div class="mini-grid">
+          <div class="mini-card">
+            <strong>看到新版提示</strong>
+            <p>插件里如果提示“发现新版插件”，点“下载新版插件包”。也可以直接回到本教程页下载。</p>
+          </div>
+          <div class="mini-card">
+            <strong>解压新版</strong>
+            <p>把新版 zip 解压。可以覆盖原来的旧插件文件夹，也可以放成一个新的固定文件夹。</p>
+          </div>
+          <div class="mini-card">
+            <strong>刷新 Chrome 扩展</strong>
+            <p>打开 <code>chrome://extensions</code>，找到“大宜宾录音助手”，点“重新加载”。</p>
+          </div>
+          <div class="mini-card">
+            <strong>如果放到新文件夹</strong>
+            <p>重新点“加载已解压的扩展程序”，选择新文件夹。</p>
+          </div>
+        </div>
+        <div class="callout">Chrome 不会自动解压 zip，也不会自动覆盖旧插件文件夹。下载新版后，仍然要人工解压并刷新扩展。</div>
+      </div>
+    </details>
+
+    <details id="faq" class="chapter">
+      <summary>
+        <span class="num">10</span>
+        <span class="summary-copy"><strong>常见问题</strong><span>哪里卡住，就展开这一栏查。</span></span>
+        <span class="chevron">›</span>
+      </summary>
+      <div class="chapter-body">
+        <div class="mini-grid">
+          <div class="mini-card">
+            <strong>找不到“加载已解压的扩展程序”</strong>
+            <p>先确认 <code>chrome://extensions</code> 右上角“开发者模式”已经打开。</p>
+          </div>
+          <div class="mini-card">
+            <strong>提示“清单文件缺失”</strong>
+            <p>说明选错文件夹，或者还没解压 zip。请选择里面能看到 <code>manifest.json</code> 的文件夹。</p>
+          </div>
+          <div class="mini-card">
+            <strong>登录失败</strong>
+            <p>先检查花名/工号和密码。默认密码是 <code>dayibin</code>；如果改过密码，就用新密码。</p>
+          </div>
+          <div class="mini-card">
+            <strong>插件打不开</strong>
+            <p>检查解压出来的插件文件夹是否被删除、改名或移动。找不到就重新下载、解压、加载。</p>
+          </div>
+          <div class="mini-card">
+            <strong>网页录音识别不到</strong>
+            <p>先在原网页播放录音，再点“识别当前页录音”。还不行就下载录音后手动上传。</p>
+          </div>
+          <div class="mini-card">
+            <strong>一直处理中</strong>
+            <p>长录音会慢。过一会儿到历史点“刷新”；等很久还没好，把录音标题和时间发给管理员。</p>
+          </div>
+        </div>
+      </div>
+    </details>
   </main>
+
   <script>
     async function hydrateLatestDownload() {
       const link = document.getElementById('downloadLink');
       const meta = document.getElementById('downloadMeta');
+      const shaText = document.getElementById('shaText');
       try {
-        const response = await fetch('/api/extension/latest', { cache: 'no-store' });
+        const response = await fetch('api/extension/latest', { cache: 'no-store' });
         if (!response.ok) return;
         const payload = await response.json();
         const latest = payload.latestExtension || {};
         if (latest.downloadUrl) link.href = latest.downloadUrl;
         if (latest.version) {
-          meta.textContent = `当前版本 ${latest.version}。下载后解压，再到 Chrome 扩展管理页加载解压后的文件夹。`;
+          meta.textContent = `当前版本 ${latest.version}。下载后先解压，再到 Chrome 里加载解压后的文件夹。`;
+        }
+        if (latest.sha256) {
+          shaText.textContent = `校验值：${latest.sha256}`;
         }
       } catch {
         // Keep the packaged fallback link visible.
       }
     }
 
+    function openTargetChapter(hash) {
+      const id = String(hash || '').replace(/^#/, '');
+      if (!id) return;
+      const target = document.getElementById(id);
+      if (target && target.tagName.toLowerCase() === 'details') {
+        target.open = true;
+        setTimeout(() => target.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30);
+      }
+    }
+
+    document.querySelectorAll('.toc a').forEach((link) => {
+      link.addEventListener('click', () => openTargetChapter(link.getAttribute('href')));
+    });
+    window.addEventListener('hashchange', () => openTargetChapter(location.hash));
+    openTargetChapter(location.hash);
     hydrateLatestDownload();
   </script>
 </body>

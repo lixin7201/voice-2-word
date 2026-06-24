@@ -1,13 +1,13 @@
 {
   "name": "大宜宾录音助手",
-  "version": "0.1.2",
-  "minSupportedVersion": "0.1.2",
-  "releasedAt": "2026-06-18T07:01:39.055Z",
+  "version": "0.1.4",
+  "minSupportedVersion": "0.1.4",
+  "releasedAt": "2026-06-24T08:27:39.558Z",
   "changelog": [
-    "新增网页录音重复识别提醒",
-    "新增跟单一键复制",
-    "新增多种会议总结模板"
+    "模型池优先级调整为 sub2api GPT-5.4、sub2api GPT-5.5、EasyAI、Kimi",
+    "修复 Kimi K 系列温度参数兼容",
+    "同步安装页到 0.1.4"
   ],
-  "downloadUrl": "http://lixindemac-studio.local:8127/releases/extension/voice-to-word-extension-0.1.2.zip",
-  "sha256": "36d84932a279a57812089a4dfa52abde51178f5add0ec080cc652a8eea0758ab"
+  "downloadUrl": "http://lixindemac-studio.local:8127/releases/extension/voice-to-word-extension-0.1.4.zip",
+  "sha256": "fad2715eb336b60de6cf07c475d64c3b3453a80e4a2a45ab5f7c3154f77d3dbe"
 }

@@ -2359,6 +2359,78 @@ textarea:focus {
   max-width: 560px;
 }
 
+.share-panel {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.share-form {
+  display: grid;
+  gap: 10px;
+}
+
+.share-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.share-option.disabled {
+  color: var(--muted);
+  background: #f2f5f8;
+}
+
+.share-option input {
+  width: 18px;
+  height: 18px;
+}
+
+.share-link-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.share-link-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.share-link-row.disabled {
+  opacity: .66;
+}
+
+.share-url {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.share-link-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .hidden {
   display: none !important;
 }
@@ -2402,7 +2474,8 @@ textarea:focus {
 @media (max-width: 760px) {
   .upload-dropzone,
   .processing-mode-grid,
-  .download-select {
+  .download-select,
+  .share-link-row {
     grid-template-columns: 1fr;
   }
 

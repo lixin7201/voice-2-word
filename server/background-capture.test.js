@@ -7,6 +7,7 @@ const {
   headerValue,
   isVolatileQueryParam,
   mergeCandidates,
+  resetListeningState,
   sizeFromResponseHeaders,
   stripQuery,
   totalSizeFromContentRange,
@@ -183,11 +184,27 @@ test('classifies volatile query params used by signed media URLs', () => {
 });
 
 test('background diagnostics expose listener and scan state fields', () => {
+  resetListeningState();
   const diagnostics = getDiagnostics();
   assert.equal(Object.prototype.hasOwnProperty.call(diagnostics, 'listeningTabId'), true);
+  assert.equal(Object.prototype.hasOwnProperty.call(diagnostics, 'listeningTabUrl'), true);
+  assert.equal(Object.prototype.hasOwnProperty.call(diagnostics, 'activeTabUrl'), true);
   assert.equal(Object.prototype.hasOwnProperty.call(diagnostics, 'globalStatePhase'), true);
   assert.equal(Object.prototype.hasOwnProperty.call(diagnostics, 'candidatesCount'), true);
+  assert.equal(Object.prototype.hasOwnProperty.call(diagnostics, 'networkCandidateCountForTab'), true);
+  assert.equal(Object.prototype.hasOwnProperty.call(diagnostics, 'lastCandidateAt'), true);
+  assert.equal(Object.prototype.hasOwnProperty.call(diagnostics, 'lastContentScriptError'), true);
+  assert.equal(Object.prototype.hasOwnProperty.call(diagnostics, 'lastScanAction'), true);
   assert.equal(Object.prototype.hasOwnProperty.call(diagnostics, 'lastScanError'), true);
   assert.equal(Object.prototype.hasOwnProperty.call(diagnostics, 'serviceWorkerStartedAt'), true);
   assert.equal(Object.prototype.hasOwnProperty.call(diagnostics, 'extensionVersion'), true);
+  assert.equal(Object.prototype.hasOwnProperty.call(diagnostics, 'manifestHostPermissions'), true);
+});
+
+test('resetting the listener clears candidate diagnostics', () => {
+  resetListeningState();
+  const diagnostics = getDiagnostics();
+  assert.equal(diagnostics.globalStatePhase, 'idle');
+  assert.equal(diagnostics.candidatesCount, 0);
+  assert.equal(diagnostics.lastCandidateAt, '');
 });

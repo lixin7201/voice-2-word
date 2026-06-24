@@ -130,7 +130,7 @@ async function callOpenAiResponses(provider, messages, fetchImpl) {
 async function callOpenAiChat(provider, messages, fetchImpl, options = {}) {
   const payload = {
     model: provider.requestModel,
-    temperature: 0.2,
+    temperature: chatTemperature(provider),
     messages,
   };
   if (options.responseFormatJson) payload.response_format = { type: 'json_object' };
@@ -142,6 +142,13 @@ async function callOpenAiChat(provider, messages, fetchImpl, options = {}) {
   const content = json.choices?.[0]?.message?.content || '';
   if (!content) throw new Error('模型返回为空');
   return content;
+}
+
+function chatTemperature(provider) {
+  if (/api\.kimi\.com/i.test(provider.baseUrl || '') && /^kimi-k/i.test(provider.requestModel || '')) {
+    return 1;
+  }
+  return 0.2;
 }
 
 async function fetchProviderJson(provider, url, options, fetchImpl) {

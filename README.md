@@ -188,7 +188,7 @@ npm test
 1. 启动后端：`npm run dev`
 2. 打开插件，用 `离心 / dayibin` 登录。
 3. 进入“配置”页。
-4. 填写 R2、DashScope 参数，并在“总结模型池”里配置 EasyAI GPT-5.5、AI 大宜宾 sub2api GPT-5.5 或 Kimi K2.6。
+4. 填写 R2、DashScope 参数，并在“总结模型池”里配置 AI 大宜宾 sub2api GPT-5.4 / GPT-5.5、EasyAI GPT-5.5 或 Kimi K2.6。
 5. 回到首页上传录音测试。
 
 真实转写需要同时配置：
@@ -199,7 +199,7 @@ npm test
 - `CLOUDFLARE_R2_BUCKET`
 - `DASHSCOPE_API_KEY`
 
-后端会先把录音上传到 R2，再生成 2 小时有效的临时链接提交给 DashScope Fun-ASR。总结会读取“总结模型池”中已启用且配置了 Key 的模型，按优先级依次调用；`openai-responses` 用于 EasyAI/sub2api GPT-5.5，`openai-chat` 用于 Kimi K2.6。模型池没有可用模型时，才读取旧版 EasyAI/Kimi 环境变量兜底；都未配置时使用本地结构化模板，保证流程可检查。
+后端会先把录音上传到 R2，再生成 2 小时有效的临时链接提交给 DashScope Fun-ASR。总结会读取“总结模型池”中已启用且配置了 Key 的模型，按优先级依次调用；默认顺序是 sub2api GPT-5.4、sub2api GPT-5.5、EasyAI GPT-5.5、Kimi K2.6。模型池没有可用模型时，才读取旧版 EasyAI/Kimi 环境变量兜底；都未配置时使用本地结构化模板，保证流程可检查。
 
 模型池注意事项：
 

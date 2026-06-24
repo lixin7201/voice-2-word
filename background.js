@@ -45,6 +45,10 @@ let listeningTabId = null;
 let listeningTabInfo = null;
 let listeningStartedAt = 0;
 let lastScanError = '';
+let lastContentScriptError = '';
+let lastScanAction = '';
+let lastCandidateAt = '';
+let lastCandidateHost = '';
 let tabNetworkCandidates = new Map();
 let globalState = {
   phase: 'idle',
@@ -95,12 +99,21 @@ function setupExtensionRuntime() {
     }
 
     if (request.type === 'GET_DIAGNOSTICS') {
-      sendResponse(getDiagnostics());
-      return false;
+      chromeApi.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        sendResponse(getDiagnostics(tabs?.[0] || null));
+      });
+      return true;
     }
 
     if (request.type === 'SCAN_PAGE') {
-      scanActiveTab();
+      scanActiveTab('scan');
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (request.type === 'RESET_AND_SCAN_PAGE') {
+      resetListeningState();
+      scanActiveTab('reset');
       sendResponse({ ok: true });
       return false;
     }
@@ -132,16 +145,26 @@ function dispatchStateChange(updates = {}) {
   });
 }
 
-function getDiagnostics() {
+function getDiagnostics(activeTab = null) {
   return {
     listeningTabId,
+    listeningTabUrl: listeningTabInfo?.url || '',
+    listeningTabTitle: listeningTabInfo?.title || '',
+    activeTabUrl: activeTab?.url || '',
+    activeTabTitle: activeTab?.title || '',
     listeningStartedAt: listeningStartedAt ? new Date(listeningStartedAt).toISOString() : '',
     globalStatePhase: globalState.phase,
     statusText: globalState.statusText,
     candidatesCount: Array.isArray(globalState.candidates) ? globalState.candidates.length : 0,
+    networkCandidateCountForTab: listeningTabId ? recentNetworkCandidates(listeningTabId).length : 0,
+    lastCandidateAt,
+    lastCandidateHost,
     lastScanError,
+    lastContentScriptError,
+    lastScanAction,
     serviceWorkerStartedAt,
     extensionVersion: chromeApi?.runtime?.getManifest?.().version || '',
+    manifestHostPermissions: chromeApi?.runtime?.getManifest?.().host_permissions || [],
   };
 }
 
@@ -182,7 +205,7 @@ function setupTabLifecycleListeners() {
   });
 }
 
-function scanActiveTab() {
+function scanActiveTab(action = 'scan') {
   chromeApi.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs?.[0];
     if (!tab?.id) {
@@ -193,14 +216,16 @@ function scanActiveTab() {
       });
       return;
     }
-    scanTab(tab);
+    scanTab(tab, action);
   });
 }
 
-function scanTab(tab) {
+function scanTab(tab, action = 'scan') {
   listeningTabId = tab.id;
   listeningTabInfo = { title: tab.title || '', url: tab.url || '' };
   listeningStartedAt = Date.now();
+  lastScanAction = action;
+  lastContentScriptError = '';
   tabNetworkCandidates.set(tab.id, []);
   dispatchStateChange({
     phase: 'extracting',
@@ -219,6 +244,7 @@ function scanTab(tab) {
     },
     () => {
       if (chromeApi.runtime.lastError) {
+        lastContentScriptError = chromeApi.runtime.lastError.message || '';
         dispatchStateChange({
           phase: 'error',
           error: `无法读取当前网页：${chromeApi.runtime.lastError.message}`,
@@ -239,6 +265,7 @@ function collectCandidatesFromTab(tab) {
     },
     (results) => {
       if (chromeApi.runtime.lastError) {
+        lastContentScriptError = chromeApi.runtime.lastError.message || '';
         dispatchStateChange({
           phase: 'error',
           error: `无法读取当前网页：${chromeApi.runtime.lastError.message}`,
@@ -297,6 +324,8 @@ function rememberNetworkCandidate(details) {
     foundAt: new Date().toISOString(),
   });
   if (!candidate) return;
+  lastCandidateAt = candidate.foundAt || new Date().toISOString();
+  lastCandidateHost = safeHost(candidate.url);
   rememberTabCandidates(details.tabId, [candidate]);
   if (details.tabId === listeningTabId) {
     dispatchCandidates(mergeCandidates([...globalState.candidates, candidate, ...recentNetworkCandidates(details.tabId)]));
@@ -307,6 +336,23 @@ function clearListeningSession() {
   listeningTabId = null;
   listeningTabInfo = null;
   listeningStartedAt = 0;
+}
+
+function resetListeningState() {
+  clearListeningSession();
+  tabNetworkCandidates.clear();
+  lastScanError = '';
+  lastContentScriptError = '';
+  lastCandidateAt = '';
+  lastCandidateHost = '';
+  globalState = {
+    ...globalState,
+    phase: 'idle',
+    statusText: '已重置监听状态。',
+    url: null,
+    candidates: [],
+    error: '',
+  };
 }
 
 function expireListeningSessionIfNeeded() {
@@ -351,6 +397,10 @@ function dispatchCandidates(candidates) {
       pageUrl: candidate.pageUrl || listeningTabInfo?.url || '',
     }))
     .slice(0, MAX_CANDIDATES);
+  if (visible[0]) {
+    lastCandidateAt = visible[0].foundAt || new Date().toISOString();
+    lastCandidateHost = safeHost(visible[0].url);
+  }
   const extraCount = Math.max(0, visible.length - 1);
   const readableCount = visible.filter((candidate) => candidate.uploadable !== false).length;
   dispatchStateChange({
@@ -364,6 +414,14 @@ function dispatchCandidates(candidates) {
     candidates: visible,
     error: '',
   });
+}
+
+function safeHost(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return '';
+  }
 }
 
 function mergeCandidates(candidates) {
@@ -1049,6 +1107,7 @@ if (typeof module !== 'undefined' && module.exports) {
     headerValue,
     isVolatileQueryParam,
     mergeCandidates,
+    resetListeningState,
     sizeFromResponseHeaders,
     stripQuery,
     totalSizeFromContentRange,

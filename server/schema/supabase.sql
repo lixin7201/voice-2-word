@@ -151,6 +151,35 @@ create table if not exists export_files (
   created_at timestamptz not null default now()
 );
 
+create table if not exists record_share_links (
+  id uuid primary key default gen_random_uuid(),
+  audio_record_id uuid not null references audio_records(id),
+  created_by uuid not null references employees(id),
+  token_hash text not null unique,
+  include_audio boolean not null default false,
+  include_transcript boolean not null default false,
+  include_summary boolean not null default false,
+  include_overview_card boolean not null default false,
+  include_mind_map boolean not null default false,
+  allow_download boolean not null default false,
+  expires_at timestamptz not null,
+  revoked_at timestamptz,
+  access_count integer not null default 0,
+  last_accessed_at timestamptz,
+  title_override text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists record_share_access_logs (
+  id uuid primary key default gen_random_uuid(),
+  share_link_id uuid not null references record_share_links(id),
+  event_type text not null,
+  ip_hash text,
+  user_agent text,
+  created_at timestamptz not null default now()
+);
+
 create table if not exists llm_providers (
   id text primary key,
   display_name text not null,
@@ -226,5 +255,8 @@ create index if not exists idx_audio_records_status on audio_records(status);
 create index if not exists idx_audio_records_asr_task_id on audio_records(asr_task_id);
 create index if not exists idx_audio_records_created_at on audio_records(created_at);
 create index if not exists idx_record_processing_events_record on record_processing_events(audio_record_id);
+create index if not exists idx_record_share_links_record on record_share_links(audio_record_id);
+create index if not exists idx_record_share_links_token_hash on record_share_links(token_hash);
+create index if not exists idx_record_share_links_expires_at on record_share_links(expires_at);
 create index if not exists idx_llm_providers_priority on llm_providers(priority);
 create index if not exists idx_system_settings_key on system_settings(key);

@@ -1,0 +1,141 @@
+:root {
+  color-scheme: light;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: #14211d;
+  background: #eef5f2;
+  --green: #005c3b;
+  --teal: #0f8a6a;
+  --line: #d3e0dc;
+  --muted: #5d6d68;
+  --panel: #fff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: linear-gradient(180deg, #eef7f4 0%, #f8fbfa 52%, #edf5f2 100%);
+}
+
+.share-shell {
+  width: min(860px, 100%);
+  margin: 0 auto;
+  padding: 18px 12px 42px;
+}
+
+.share-card,
+.content-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 18px 44px rgb(29 52 45 / 10%);
+}
+
+.share-card {
+  padding: 22px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--green);
+  font-weight: 800;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(26px, 8vw, 40px);
+  line-height: 1.18;
+  letter-spacing: 0;
+}
+
+h2 {
+  margin: 0 0 12px;
+  font-size: 20px;
+}
+
+.muted,
+.meta {
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #eef5f2;
+  color: #264039;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.content-section {
+  margin-top: 12px;
+  padding: 16px;
+}
+
+audio {
+  width: 100%;
+  min-height: 44px;
+}
+
+.markdown,
+.transcript-text,
+.segment-text {
+  font-size: 16px;
+  line-height: 1.78;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.segment {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.segment:first-child {
+  border-top: 0;
+}
+
+.time {
+  color: var(--green);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.error {
+  border-color: #f2b8b5;
+  background: #fff4f3;
+  color: #a5231f;
+}
+
+@media (max-width: 520px) {
+  .share-shell {
+    padding: 10px 8px 32px;
+  }
+
+  .share-card,
+  .content-section {
+    padding: 14px;
+  }
+
+  .segment {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}

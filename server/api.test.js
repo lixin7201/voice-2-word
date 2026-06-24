@@ -7,6 +7,8 @@ const { createVoiceServer } = require('./app');
 const { createInitialData } = require('./lib/seed');
 const { mediaUrlFingerprint, rawMediaUrlFingerprint } = require('./lib/media-fingerprint');
 
+const extensionVersion = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8')).version;
+
 function startTestServer(options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-2-word-'));
   const dataFile = path.join(dir, 'db.json');
@@ -570,12 +572,24 @@ test('web root serves login workbench without weakening API auth', async () => {
     assert.equal(installPage.status, 200);
     assert.match(installPage.headers.get('content-type') || '', /text\/html/);
     const installHtml = await installPage.text();
-    assert.match(installHtml, /安装大宜宾录音助手/);
-    assert.match(installHtml, /voice-to-word-extension-0\.1\.2\.zip/);
-    assert.match(installHtml, /\/api\/extension\/latest/);
+    assert.match(installHtml, /大宜宾录音助手安装和使用教程/);
+    assert.match(installHtml, new RegExp(`voice-to-word-extension-${extensionVersion.replaceAll('.', '\\.')}.zip`));
+    assert.match(installHtml, /api\/extension\/latest/);
+    assert.match(installHtml, /目录/);
+    assert.match(installHtml, /默认密码是 <code>dayibin<\/code>/);
     assert.match(installHtml, /加载已解压的扩展程序/);
+    assert.match(installHtml, /监听网页录音/);
+    assert.match(installHtml, /分享链接/);
 
-    const extensionZip = await fetch(`${baseUrl}/releases/extension/voice-to-word-extension-0.1.2.zip`, { method: 'HEAD' });
+    const installAsset = await fetch(`${baseUrl}/install-assets/dashboard.png`, { method: 'HEAD' });
+    assert.equal(installAsset.status, 200);
+    assert.match(installAsset.headers.get('content-type') || '', /image\/png/);
+
+    const captureAsset = await fetch(`${baseUrl}/install-assets/capture-guide.png`, { method: 'HEAD' });
+    assert.equal(captureAsset.status, 200);
+    assert.match(captureAsset.headers.get('content-type') || '', /image\/png/);
+
+    const extensionZip = await fetch(`${baseUrl}/releases/extension/voice-to-word-extension-0.1.3.zip`, { method: 'HEAD' });
     assert.equal(extensionZip.status, 200);
     assert.match(extensionZip.headers.get('content-type') || '', /application\/zip/);
 
@@ -593,6 +607,115 @@ test('web root serves login workbench without weakening API auth', async () => {
     const protectedApi = await request(baseUrl, '/api/me');
     assert.equal(protectedApi.response.status, 401);
     assert.equal(protectedApi.body.error, '请先登录');
+  } finally {
+    server.close();
+  }
+});
+
+test('record share links expose only selected content and support mobile audio playback', async () => {
+  const data = createInitialData();
+  const owner = data.employees.find((employee) => employee.display_name === '离心');
+  const other = data.employees.find((employee) => employee.display_name === '岚岚');
+  const now = new Date().toISOString();
+  const record = completedRecord('rec-share', owner, null, now);
+  data.audio_records.push(record);
+  addTranscriptAndSummary(data, record.id, now);
+
+  const { server, baseUrl, dir } = await startTestServer({ initialData: data });
+  try {
+    fs.mkdirSync(path.join(dir, 'uploads'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'uploads', 'record.mp3'), Buffer.from('0123456789abcdef'));
+    const lixin = await login(baseUrl, '离心');
+    const lanlan = await login(baseUrl, other.display_name);
+
+    const forbidden = await request(baseUrl, `/api/records/${record.id}/share-links`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({ includeAudio: true }),
+    });
+    assert.equal(forbidden.response.status, 403);
+
+    const created = await request(baseUrl, `/api/records/${record.id}/share-links`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({
+        includeAudio: true,
+        includeTranscript: true,
+        includeSummary: false,
+        expiresInDays: 7,
+      }),
+    });
+    assert.equal(created.response.status, 201);
+    assert.match(created.body.share.url, /\/s\//);
+    assert.equal(created.body.share.includeAudio, true);
+    assert.equal(created.body.share.includeTranscript, true);
+    assert.equal(created.body.share.includeSummary, false);
+
+    const listed = await request(baseUrl, `/api/records/${record.id}/share-links`, {
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    assert.equal(listed.response.status, 200);
+    assert.equal(listed.body.shares.length, 1);
+    assert.equal(listed.body.shares[0].url, created.body.share.url);
+
+    const token = decodeURIComponent(new URL(created.body.share.url).pathname.replace('/s/', ''));
+    const sharePage = await fetch(`${baseUrl}/s/${encodeURIComponent(token)}`);
+    assert.equal(sharePage.status, 200);
+    assert.match(await sharePage.text(), /录音分享/);
+
+    const shared = await fetch(`${baseUrl}/api/shared/${encodeURIComponent(token)}`);
+    assert.equal(shared.status, 200);
+    const sharedBody = await shared.json();
+    assert.equal(sharedBody.includes.audio, true);
+    assert.equal(sharedBody.includes.transcript, true);
+    assert.equal(sharedBody.includes.summary, false);
+    assert.equal(sharedBody.summary, undefined);
+    assert.match(sharedBody.transcript.text, /已经识别过/);
+    assert.match(sharedBody.audio.url, /\/api\/shared\//);
+
+    const audio = await fetch(`${baseUrl}/api/shared/${encodeURIComponent(token)}/audio`, {
+      headers: { Range: 'bytes=0-3' },
+    });
+    assert.equal(audio.status, 206);
+    assert.equal(audio.headers.get('content-range'), 'bytes 0-3/16');
+    assert.equal(await audio.text(), '0123');
+
+    const revoked = await request(baseUrl, `/api/share-links/${created.body.share.id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+    });
+    assert.equal(revoked.response.status, 200);
+    assert.ok(revoked.body.share.revokedAt);
+
+    const afterRevoke = await fetch(`${baseUrl}/api/shared/${encodeURIComponent(token)}`);
+    assert.equal(afterRevoke.status, 410);
+  } finally {
+    server.close();
+  }
+});
+
+test('share links reject unavailable summary content', async () => {
+  const data = createInitialData();
+  const owner = data.employees.find((employee) => employee.display_name === '离心');
+  const now = new Date().toISOString();
+  const record = completedRecord('rec-share-bad-summary', owner, null, now);
+  data.audio_records.push(record);
+  addTranscriptAndSummary(data, record.id, now);
+  data.summaries[0].quality_status = 'fallback_template';
+  data.summaries[0].quality_reason = '真实总结模型全部失败';
+  data.summaries[0].model_provider = 'local-template';
+  data.summaries[0].model_error = 'all providers failed';
+
+  const { server, baseUrl } = await startTestServer({ initialData: data });
+  try {
+    const lixin = await login(baseUrl, '离心');
+    const result = await request(baseUrl, `/api/records/${record.id}/share-links`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lixin.accessToken}` },
+      body: JSON.stringify({ includeSummary: true }),
+    });
+    assert.equal(result.response.status, 409);
+    assert.match(result.body.error, /AI 总结未成功/);
   } finally {
     server.close();
   }

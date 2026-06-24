@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "大宜宾录音助手",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "description": "大宜宾内部录音捕获、转写、总结、跟单和历史管理工具。",
   "icons": {
     "16": "icon.png",

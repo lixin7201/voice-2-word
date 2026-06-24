@@ -12,25 +12,25 @@ const GENERATION_PROTOCOLS = new Set([
 
 const DEFAULT_LLM_PROVIDER_TEMPLATES = [
   {
-    id: 'llm_easyai_gpt55',
-    display_name: 'EasyAI GPT-5.5',
-    provider_key: 'easyai',
-    channel_id: 'easyai',
+    id: 'llm_sub2api_gpt55',
+    display_name: 'AI 大宜宾 sub2api - GPT-5.4',
+    provider_key: 'sub2api',
+    channel_id: 'sub2api',
     protocol: 'openai-responses',
-    base_url: 'https://aisoeasy.cc/v1',
+    base_url: 'http://127.0.0.1:8080/v1',
     endpoint_path: '/responses',
     api_key: '',
-    request_model: 'gpt-5.5',
+    request_model: 'gpt-5.4',
     priority: 10,
     enabled: false,
     allow_fallback: true,
     timeout_ms: 120000,
-    reasoning_effort: 'high',
+    reasoning_effort: '',
     supports_json: true,
     supports_files: false,
   },
   {
-    id: 'llm_sub2api_gpt55',
+    id: 'llm_sub2api_gpt55_fallback',
     display_name: 'AI 大宜宾 sub2api - GPT-5.5',
     provider_key: 'sub2api',
     channel_id: 'sub2api',
@@ -48,6 +48,24 @@ const DEFAULT_LLM_PROVIDER_TEMPLATES = [
     supports_files: false,
   },
   {
+    id: 'llm_easyai_gpt55',
+    display_name: 'EasyAI GPT-5.5',
+    provider_key: 'easyai',
+    channel_id: 'easyai',
+    protocol: 'openai-responses',
+    base_url: 'https://aisoeasy.cc/v1',
+    endpoint_path: '/responses',
+    api_key: '',
+    request_model: 'gpt-5.5',
+    priority: 30,
+    enabled: false,
+    allow_fallback: true,
+    timeout_ms: 120000,
+    reasoning_effort: 'high',
+    supports_json: true,
+    supports_files: false,
+  },
+  {
     id: 'llm_kimi_k26',
     display_name: 'Kimi K2.6',
     provider_key: 'kimi',
@@ -57,7 +75,7 @@ const DEFAULT_LLM_PROVIDER_TEMPLATES = [
     endpoint_path: '/chat/completions',
     api_key: '',
     request_model: 'kimi-k2.6',
-    priority: 30,
+    priority: 40,
     enabled: false,
     allow_fallback: true,
     timeout_ms: 120000,
@@ -182,6 +200,24 @@ function compareProviderPriority(left, right) {
 
 function legacyProviders(config) {
   const providers = [];
+  if (config.sub2apiBaseUrl && config.sub2apiApiKey && config.sub2apiModel) {
+    providers.push({
+      id: 'legacy_sub2api',
+      displayName: 'AI 大宜宾 sub2api - GPT-5.5',
+      providerKey: 'sub2api',
+      channelId: 'sub2api',
+      protocol: 'openai-responses',
+      baseUrl: config.sub2apiBaseUrl,
+      endpointPath: '/responses',
+      apiKey: config.sub2apiApiKey,
+      requestModel: config.sub2apiModel || 'gpt-5.5',
+      priority: 10,
+      enabled: true,
+      allowFallback: true,
+      timeoutMs: 120000,
+      reasoningEffort: 'high',
+    });
+  }
   if (config.easyAiBaseUrl && config.easyAiApiKey && config.easyAiModel) {
     const model = config.easyAiModel || 'gpt-5.5';
     const responses = String(model).toLowerCase().startsWith('gpt-5.5');
@@ -195,29 +231,11 @@ function legacyProviders(config) {
       endpointPath: responses ? '/responses' : '/chat/completions',
       apiKey: config.easyAiApiKey,
       requestModel: model,
-      priority: 10,
+      priority: 30,
       enabled: true,
       allowFallback: true,
       timeoutMs: 120000,
       reasoningEffort: responses ? 'high' : '',
-    });
-  }
-  if (config.sub2apiBaseUrl && config.sub2apiApiKey && config.sub2apiModel) {
-    providers.push({
-      id: 'legacy_sub2api',
-      displayName: 'AI 大宜宾 sub2api - GPT-5.5',
-      providerKey: 'sub2api',
-      channelId: 'sub2api',
-      protocol: 'openai-responses',
-      baseUrl: config.sub2apiBaseUrl,
-      endpointPath: '/responses',
-      apiKey: config.sub2apiApiKey,
-      requestModel: config.sub2apiModel || 'gpt-5.5',
-      priority: 20,
-      enabled: true,
-      allowFallback: true,
-      timeoutMs: 120000,
-      reasoningEffort: 'high',
     });
   }
   if (config.kimiBaseUrl && config.kimiApiKey && config.kimiModel) {
@@ -231,7 +249,7 @@ function legacyProviders(config) {
       endpointPath: '/chat/completions',
       apiKey: config.kimiApiKey,
       requestModel: config.kimiModel || 'kimi-k2.6',
-      priority: 30,
+      priority: 40,
       enabled: true,
       allowFallback: true,
       timeoutMs: 120000,

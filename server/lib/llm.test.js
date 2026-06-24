@@ -115,6 +115,7 @@ test('openai chat providers still call /chat/completions', async () => {
 
   assert.equal(calls[0].url, 'https://api.kimi.com/coding/v1/chat/completions');
   assert.equal(calls[0].body.model, 'kimi-k2.6');
+  assert.equal(calls[0].body.temperature, 1);
   assert.equal(calls[0].headers['User-Agent'], 'KimiCLI/1.30.0');
   assert.equal(result.modelProvider, 'kimi');
 });

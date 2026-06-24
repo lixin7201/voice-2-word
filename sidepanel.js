@@ -63,7 +63,12 @@ const appState = {
   titleEditing: false,
   titleDraft: null,
   scanActive: false,
+  scanStartedAt: '',
   backgroundCandidateNotice: '',
+  sharePanelOpen: false,
+  shareLinks: [],
+  shareStatus: '',
+  shareStatusType: '',
   loginNameDraft: '',
   busy: false,
   activeAction: '',
@@ -96,6 +101,7 @@ const app = document.getElementById('app');
 let scheduledRender = 0;
 let detailPollTimer = 0;
 let recordsPollTimer = 0;
+let scanEmptyTimer = 0;
 let clientErrorHandlersInstalled = false;
 const candidateDuplicateRequests = new Set();
 
@@ -430,6 +436,7 @@ function renderCapture() {
         </div>
         <div class="capture-main-actions">
           <button class="btn primary" data-action="scan-page" ${appState.busy ? 'disabled' : ''}>${scanLabel}</button>
+          <button class="btn" data-action="scan-page" data-reset="1" ${appState.busy ? 'disabled' : ''}>重新监听当前页</button>
           <button class="btn" data-view="upload">手动上传</button>
         </div>
       </section>
@@ -445,11 +452,19 @@ function renderCapture() {
 
 function renderCandidateList() {
   if (!appState.candidates.length) {
+    const waiting = appState.scanActive;
+    const waitingMs = appState.scanStartedAt ? Date.now() - new Date(appState.scanStartedAt).getTime() : 0;
+    const longWait = waiting && waitingMs >= 20 * 1000;
     return `
       <section class="glass section capture-guide">
-        <strong>还没有锁定录音</strong>
-        <span>先在左侧网页打开要转写的那条录音，再点击播放。</span>
-        <span>如果网页不允许捕获，可点“手动上传”选择下载好的文件。</span>
+        <strong>${longWait ? '还没有发现录音' : waiting ? '正在监听当前页' : '还没有锁定录音'}</strong>
+        <span>${waiting ? '请回到录音网页点击播放，插件会在播放时捕获录音地址。' : '先在左侧网页打开要转写的那条录音，再点击播放。'}</span>
+        ${longWait ? '<span>请确认当前打开的是录音详情页、网页里的播放按钮已经点过，录音正在播放或刚刚发起加载。</span>' : ''}
+        <span>如果刷新过录音网页，请点“重新监听当前页”重新绑定当前页面。</span>
+        <span>如果仍没有出现，可复制监听诊断发给管理员，或点“手动上传”选择下载好的文件。</span>
+        <div class="btn-row">
+          <button class="btn" type="button" data-action="copy-extension-diagnostics">复制监听诊断</button>
+        </div>
       </section>
     `;
   }
@@ -848,9 +863,11 @@ function renderDetail() {
           <span class="badge">${escapeHtml(templateLabel(record.templateType))}</span>
           <span class="badge">${escapeHtml(followupLabel(record.followupType || 'none'))}</span>
           <span class="badge">${escapeHtml(titleSourceLabel(record.titleSource))}</span>
+          <button class="btn" type="button" data-action="open-share-panel">分享</button>
         </div>
         ${renderRecordProgress(record)}
         ${record.errorMessage ? `<div class="status error">${escapeHtml(record.errorMessage)}</div>` : ''}
+        ${appState.sharePanelOpen ? renderSharePanel(record) : ''}
       </section>
       <section class="glass section detail-workspace">
         ${renderDetailTabs(record)}
@@ -1162,6 +1179,76 @@ function renderDownloadPanel(record) {
       ], hasSummary ? 'PNG 暂未开放，SVG 可插入文档。' : '未生成总结卡片，暂不可下载。')}
       ${exportFiles.length ? `<div class="hint">最近生成：${exportFiles.slice(0, 5).map((file) => escapeHtml(`${exportTargetLabel(file.export_type)} ${formatLabel(file.format)} ${formatDate(file.created_at)}`)).join(' · ')}</div>` : ''}
       ${appState.exportNotice ? `<div class="export-notice">${escapeHtml(appState.exportNotice)}</div>` : ''}
+    </div>
+  `;
+}
+
+function renderSharePanel(record) {
+  const hasAudio = Boolean(record.audioUrl);
+  const hasTranscript = hasTranscriptContent(record);
+  const hasSummary = hasSummaryContent(record);
+  const shares = Array.isArray(appState.shareLinks) ? appState.shareLinks : [];
+  return `
+    <div class="share-panel">
+      <div class="item-title">
+        <h3>分享链接</h3>
+        <button class="btn" type="button" data-action="close-share-panel">关闭</button>
+      </div>
+      <form id="share-form" class="share-form">
+        <label class="share-option ${hasAudio ? '' : 'disabled'}">
+          <span>录音</span>
+          <input name="includeAudio" type="checkbox" ${hasAudio ? 'checked' : 'disabled'}>
+        </label>
+        <label class="share-option ${hasTranscript ? '' : 'disabled'}">
+          <span>逐字稿</span>
+          <input name="includeTranscript" type="checkbox" ${hasTranscript ? 'checked' : 'disabled'}>
+        </label>
+        <label class="share-option ${hasSummary ? '' : 'disabled'}">
+          <span>总结</span>
+          <input name="includeSummary" type="checkbox" ${hasSummary ? 'checked' : 'disabled'}>
+        </label>
+        <div class="field compact-field">
+          <label for="share-expires-days">有效期</label>
+          <select id="share-expires-days" name="expiresInDays">
+            <option value="1">1 天</option>
+            <option value="7" selected>7 天</option>
+            <option value="30">30 天</option>
+          </select>
+        </div>
+        <div class="btn-row">
+          <button class="btn primary" type="button" data-action="create-share-link" ${appState.busy ? 'disabled' : ''}>复制链接</button>
+          <button class="btn" type="button" data-action="refresh-share-links">刷新列表</button>
+        </div>
+        <div class="hint">分享链接在有效期内无需登录即可访问，请只发给需要查看的人。</div>
+        ${appState.shareStatus ? `<div class="status ${escapeHtml(appState.shareStatusType)}">${escapeHtml(appState.shareStatus)}</div>` : ''}
+      </form>
+      ${shares.length ? `
+        <div class="share-link-list">
+          ${shares.map((share) => renderShareLinkRow(share)).join('')}
+        </div>
+      ` : '<div class="empty">还没有创建分享链接。</div>'}
+    </div>
+  `;
+}
+
+function renderShareLinkRow(share = {}) {
+  const disabled = Boolean(share.revokedAt);
+  const parts = [
+    share.includeAudio ? '录音' : '',
+    share.includeTranscript ? '逐字稿' : '',
+    share.includeSummary ? '总结' : '',
+  ].filter(Boolean).join(' / ') || '未选择内容';
+  return `
+    <div class="share-link-row ${disabled ? 'disabled' : ''}">
+      <div>
+        <strong>${escapeHtml(parts)}</strong>
+        <div class="meta">有效期至 ${escapeHtml(formatDate(share.expiresAt))} · 访问 ${Number(share.accessCount || 0)} 次${disabled ? ' · 已撤销' : ''}</div>
+        <div class="share-url">${escapeHtml(share.url || '')}</div>
+      </div>
+      <div class="share-link-actions">
+        <button class="btn" type="button" data-action="copy-share-link" data-url="${escapeHtml(share.url || '')}" ${disabled ? 'disabled' : ''}>复制</button>
+        <button class="btn danger" type="button" data-action="revoke-share-link" data-id="${escapeHtml(share.id || '')}" ${disabled ? 'disabled' : ''}>撤销</button>
+      </div>
     </div>
   `;
 }
@@ -2545,7 +2632,10 @@ function bindCommon() {
 }
 
 function bindCurrentView() {
-  onClick('button[data-action="scan-page"]', (event) => scanPage({ keepCandidates: event?.currentTarget?.dataset?.keepCandidates === '1' }));
+  onClick('button[data-action="scan-page"]', (event) => scanPage({
+    keepCandidates: event?.currentTarget?.dataset?.keepCandidates === '1',
+    reset: event?.currentTarget?.dataset?.reset === '1',
+  }));
   onClick('button[data-action="upload-candidate"]', (_event, button) => uploadCandidate(Number(button.dataset.index)));
   onClick('button[data-action="open-duplicate-record"]', (_event, button) => openDuplicateRecord(Number(button.dataset.index)));
   onClick('button[data-action="force-upload-candidate"]', (_event, button) => forceUploadCandidate(Number(button.dataset.index)));
@@ -2657,6 +2747,23 @@ function bindCurrentView() {
   onClick('button[data-action="copy-followup"]', copyFollowup);
 
   onClick('button[data-action="transcribe-record"]', transcribeRecord);
+
+  onClick('button[data-action="open-share-panel"]', openSharePanel);
+  onClick('button[data-action="close-share-panel"]', () => {
+    appState.sharePanelOpen = false;
+    appState.shareStatus = '';
+    render();
+  });
+  onClick('button[data-action="refresh-share-links"]', refreshShareLinks);
+  onClick('button[data-action="create-share-link"]', createShareLink);
+  onClick('button[data-action="copy-share-link"]', async (_event, button) => {
+    if (!button.dataset.url) return;
+    await copyText(button.dataset.url);
+    appState.shareStatus = '分享链接已复制';
+    appState.shareStatusType = 'success';
+    render();
+  });
+  onClick('button[data-action="revoke-share-link"]', (_event, button) => revokeShareLink(button.dataset.id || ''));
 
   const transcriptSearch = document.getElementById('transcript-search');
   if (transcriptSearch) transcriptSearch.addEventListener('input', (event) => {
@@ -2832,9 +2939,11 @@ function bindCurrentView() {
 }
 
 async function scanPage(options = {}) {
-  setStatus('正在扫描当前网页...', '');
+  setStatus(options.reset ? '正在重新监听当前网页...' : '正在扫描当前网页...', '');
   if (!options.keepCandidates) appState.candidates = [];
   appState.scanActive = true;
+  appState.scanStartedAt = new Date().toISOString();
+  scheduleScanEmptyHint();
   render();
   if (!chromeApi?.runtime?.sendMessage) {
     appState.candidates = [{
@@ -2849,13 +2958,29 @@ async function scanPage(options = {}) {
     render();
     return;
   }
-  chromeApi.runtime.sendMessage({ type: 'SCAN_PAGE' }, () => {
+  chromeApi.runtime.sendMessage({ type: options.reset ? 'RESET_AND_SCAN_PAGE' : 'SCAN_PAGE' }, () => {
     if (chromeApi.runtime.lastError) {
       appState.scanActive = false;
+      clearScanEmptyHint();
       setStatus(`监听启动失败：${chromeApi.runtime.lastError.message}`, 'error');
       render();
     }
   });
+}
+
+function scheduleScanEmptyHint() {
+  clearScanEmptyHint();
+  if (typeof window === 'undefined') return;
+  scanEmptyTimer = window.setTimeout(() => {
+    scanEmptyTimer = 0;
+    if (appState.scanActive && appState.view === 'capture' && !appState.candidates.length) render();
+  }, 20 * 1000);
+}
+
+function clearScanEmptyHint() {
+  if (!scanEmptyTimer || typeof window === 'undefined') return;
+  window.clearTimeout(scanEmptyTimer);
+  scanEmptyTimer = 0;
 }
 
 function handleBackgroundState(state) {
@@ -2868,10 +2993,12 @@ function handleBackgroundState(state) {
   }
   scheduleCandidateDuplicateChecks();
   if (state.phase === 'confirm' && appState.candidates.length) {
+    clearScanEmptyHint();
     appState.backgroundCandidateNotice = state.statusText || '已找到当前页录音，可以开始识别。';
     if (shouldAutoOpenCapture(appState.view)) appState.view = 'capture';
     setStatus(appState.backgroundCandidateNotice, 'success');
   } else if (state.phase === 'error') {
+    clearScanEmptyHint();
     setStatus(state.error || '扫描失败', 'error');
   } else if (appState.view === 'capture') {
     if (state.phase === 'extracting') setStatus(state.statusText || '正在监听当前网页...', '');
@@ -3499,8 +3626,72 @@ async function openRecord(recordId) {
     appState.exportNotice = '';
     appState.audioError = '';
     appState.speakerEditing = null;
+    appState.sharePanelOpen = false;
+    appState.shareLinks = [];
+    appState.shareStatus = '';
   }, false);
   render();
+}
+
+async function openSharePanel() {
+  if (!appState.detail) return;
+  appState.sharePanelOpen = true;
+  appState.shareStatus = '';
+  await refreshShareLinks();
+}
+
+async function refreshShareLinks() {
+  if (!appState.detail) return;
+  try {
+    const body = await api(`/api/records/${appState.detail.id}/share-links`);
+    appState.shareLinks = body.shares || [];
+    render();
+  } catch (error) {
+    appState.shareStatus = error.message || String(error);
+    appState.shareStatusType = 'error';
+    render();
+  }
+}
+
+async function createShareLink(event) {
+  const form = formFromEvent(event, 'share-form');
+  if (!form || !appState.detail) return;
+  const payload = {
+    includeAudio: Boolean(form.includeAudio?.checked),
+    includeTranscript: Boolean(form.includeTranscript?.checked),
+    includeSummary: Boolean(form.includeSummary?.checked),
+    expiresInDays: Number(form.expiresInDays?.value || 7),
+  };
+  try {
+    const body = await api(`/api/records/${appState.detail.id}/share-links`, {
+      method: 'POST',
+      body: payload,
+    });
+    appState.shareLinks = [body.share, ...appState.shareLinks.filter((share) => share.id !== body.share.id)];
+    await copyText(body.share.url || '');
+    appState.shareStatus = '分享链接已创建并复制';
+    appState.shareStatusType = 'success';
+    render();
+  } catch (error) {
+    appState.shareStatus = error.message || String(error);
+    appState.shareStatusType = 'error';
+    render();
+  }
+}
+
+async function revokeShareLink(id) {
+  if (!id || !appState.detail) return;
+  try {
+    const body = await api(`/api/share-links/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    appState.shareLinks = appState.shareLinks.map((share) => share.id === id ? body.share : share);
+    appState.shareStatus = '分享链接已撤销';
+    appState.shareStatusType = 'success';
+    render();
+  } catch (error) {
+    appState.shareStatus = error.message || String(error);
+    appState.shareStatusType = 'error';
+    render();
+  }
 }
 
 async function saveRecordTitle(event) {
@@ -4612,6 +4803,7 @@ async function runBusy(task, shouldRender = false) {
 async function logout(shouldRender) {
   if (detailPollTimer) window.clearInterval(detailPollTimer);
   if (recordsPollTimer) window.clearInterval(recordsPollTimer);
+  clearScanEmptyHint();
   detailPollTimer = 0;
   recordsPollTimer = 0;
   appState.accessToken = '';
@@ -4710,6 +4902,12 @@ function copyClientDiagnostics() {
     view: appState.view,
     activeAction: appState.activeAction,
     status: appState.status,
+    loggedIn: Boolean(appState.accessToken),
+    backendUrl: activeApiBaseUrl(),
+    extensionVersion: currentExtensionVersion(),
+    candidatesCount: appState.candidates.length,
+    scanActive: appState.scanActive,
+    scanStartedAt: appState.scanStartedAt || '',
     errors: appState.clientErrors,
     extensionDiagnostics: appState.extensionDiagnostics,
   }, null, 2)).then(() => {

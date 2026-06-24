@@ -95,6 +95,8 @@ function migrateData(data) {
   ensureTable('record_notes');
   ensureTable('record_processing_events');
   ensureTable('export_files');
+  ensureTable('record_share_links');
+  ensureTable('record_share_access_logs');
   const llmProviders = ensureTable('llm_providers');
   ensureTable('system_settings');
   ensureTable('audit_logs');
