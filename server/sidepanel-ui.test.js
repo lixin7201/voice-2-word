@@ -715,6 +715,26 @@ test('fallback template summaries are visible but not treated as downloadable su
   assert.match(html, /data-action="export-selected" data-target="summary" disabled/);
 });
 
+test('summarizing records hide stale fallback failure notice', () => {
+  const { api } = loadSidepanel();
+  const html = api.renderSummaryWorkspace({
+    id: 'rec_summarizing',
+    title: '重新生成中的录音',
+    status: 'summarizing',
+    templateType: 'meeting_minutes',
+    followupType: 'none',
+    transcript: { corrected_text: '逐字稿已生成' },
+    summary: {
+      summary_markdown: '# 临时模板\n- 待核对',
+      quality_status: 'fallback_template',
+      quality_reason: '真实总结模型全部失败，系统仅生成临时模板',
+    },
+  });
+
+  assert.match(html, /正在重新生成总结/);
+  assert.doesNotMatch(html, /AI 总结未成功/);
+});
+
 test('admin history defaults to employee groups with collapsible record lists', () => {
   const { api } = loadSidepanel();
   api.appState.permissions = { canViewAllRecords: true };

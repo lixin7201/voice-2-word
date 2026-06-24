@@ -1305,6 +1305,9 @@ function renderSummaryQualityNotice(record) {
   const summary = record.summary || {};
   const status = summaryQualityStatus(summary);
   if (!status || status === 'ai_ok') return '';
+  if (record.status === 'summarizing') {
+    return '<div class="status warning">正在重新生成总结，请稍等。旧的失败提示将在新结果生成后更新。</div>';
+  }
   const reason = summary.quality_reason || record.errorMessage || '';
   if (status === 'fallback_template' || status === 'invalid') {
     return `<div class="status error">AI 总结未成功，逐字稿已保留。${reason ? ` ${escapeHtml(reason)}` : ''}</div>`;

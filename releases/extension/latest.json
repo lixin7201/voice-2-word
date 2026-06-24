@@ -1,13 +1,12 @@
 {
   "name": "大宜宾录音助手",
-  "version": "0.1.4",
-  "minSupportedVersion": "0.1.4",
-  "releasedAt": "2026-06-24T08:27:39.558Z",
+  "version": "0.1.5",
+  "minSupportedVersion": "0.1.5",
+  "releasedAt": "2026-06-24T08:34:06.199Z",
   "changelog": [
-    "模型池优先级调整为 sub2api GPT-5.4、sub2api GPT-5.5、EasyAI、Kimi",
-    "修复 Kimi K 系列温度参数兼容",
-    "同步安装页到 0.1.4"
+    "修复重新生成期间仍显示旧失败提示",
+    "保留 sub2api GPT-5.4 优先模型池顺序"
   ],
-  "downloadUrl": "http://lixindemac-studio.local:8127/releases/extension/voice-to-word-extension-0.1.4.zip",
-  "sha256": "fad2715eb336b60de6cf07c475d64c3b3453a80e4a2a45ab5f7c3154f77d3dbe"
+  "downloadUrl": "http://lixindemac-studio.local:8127/releases/extension/voice-to-word-extension-0.1.5.zip",
+  "sha256": "afd3f1a6a8ce038b1307042fa169bc3efa2c16c8c183a55375efa5b8ee789235"
 }
