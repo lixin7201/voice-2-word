@@ -1,12 +1,12 @@
 {
   "name": "大宜宾录音助手",
-  "version": "0.1.5",
-  "minSupportedVersion": "0.1.5",
-  "releasedAt": "2026-06-24T08:34:06.199Z",
+  "version": "0.1.6",
+  "minSupportedVersion": "0.1.6",
+  "releasedAt": "2026-06-26T02:47:35.492Z",
   "changelog": [
-    "修复重新生成期间仍显示旧失败提示",
-    "保留 sub2api GPT-5.4 优先模型池顺序"
+    "修复点击分享后等待接口导致看起来无反应",
+    "分享面板现在会立即打开并显示加载状态"
   ],
-  "downloadUrl": "http://lixindemac-studio.local:8127/releases/extension/voice-to-word-extension-0.1.5.zip",
-  "sha256": "afd3f1a6a8ce038b1307042fa169bc3efa2c16c8c183a55375efa5b8ee789235"
+  "downloadUrl": "http://lixindemac-studio.local:8127/releases/extension/voice-to-word-extension-0.1.6.zip",
+  "sha256": "c2034edb6e0d984fab76a848c5218353e41be8bdfb6e773b6c0d30eb5717e49d"
 }

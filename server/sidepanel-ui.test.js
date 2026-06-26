@@ -145,10 +145,11 @@ globalThis.__sidepanel = {
 	  renderUpload,
 	  renderTitleEditor,
 	  scanPage,
-	  render,
-	  bindCommon,
-	  bindCurrentView,
-	  uploadAvatar,
+		  render,
+		  bindCommon,
+		  bindCurrentView,
+		  openSharePanel,
+		  uploadAvatar,
 	  uploadCandidate,
 	  validateCandidateBlobComplete,
 	  retryCandidateUpload,
@@ -733,6 +734,32 @@ test('summarizing records hide stale fallback failure notice', () => {
 
   assert.match(html, /正在重新生成总结/);
   assert.doesNotMatch(html, /AI 总结未成功/);
+});
+
+test('share panel opens immediately while share links are loading', async () => {
+  const { api, appElement } = loadSidepanel({
+    fetchImpl: async () => new Promise(() => {}),
+  });
+  api.appState.accessToken = 'token-123';
+  api.appState.view = 'detail';
+  api.appState.detail = {
+    id: 'rec_share',
+    title: '可分享录音',
+    status: 'completed',
+    createdAt: '2026-06-24T08:00:00.000Z',
+    templateType: 'meeting_minutes',
+    followupType: 'none',
+    owner: { displayName: '离心' },
+    department: { name: '运营部' },
+    audioUrl: '/api/records/rec_share/audio',
+    transcript: { corrected_text: '逐字稿' },
+    summary: { summary_markdown: '总结正文', quality_status: 'ai_ok' },
+  };
+
+  api.openSharePanel();
+
+  assert.match(appElement.innerHTML, /分享链接/);
+  assert.match(appElement.innerHTML, /正在加载分享链接/);
 });
 
 test('admin history defaults to employee groups with collapsible record lists', () => {

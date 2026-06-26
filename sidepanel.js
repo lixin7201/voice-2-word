@@ -3639,7 +3639,9 @@ async function openRecord(recordId) {
 async function openSharePanel() {
   if (!appState.detail) return;
   appState.sharePanelOpen = true;
-  appState.shareStatus = '';
+  appState.shareStatus = '正在加载分享链接...';
+  appState.shareStatusType = 'warning';
+  render();
   await refreshShareLinks();
 }
 
