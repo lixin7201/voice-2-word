@@ -770,7 +770,7 @@ test('record permissions isolate employee, department lead, and admin access', a
   }
 });
 
-test('record titles can be renamed only by owner or admin', async () => {
+test('record titles and user ids can be edited and searched', async () => {
   const { server, baseUrl } = await startTestServer();
   try {
     const lixin = await login(baseUrl, '离心');
@@ -806,6 +806,20 @@ test('record titles can be renamed only by owner or admin', async () => {
     assert.equal(ownerRename.body.record.titleSource, 'manual');
     assert.equal(ownerRename.body.record.titleLocked, true);
 
+    const ownerUserId = await request(baseUrl, `/api/records/${recordId}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({ externalUserId: '  DYC-8899  ' }),
+    });
+    assert.equal(ownerUserId.response.status, 200);
+    assert.equal(ownerUserId.body.record.externalUserId, 'DYC-8899');
+
+    const userIdSearch = await request(baseUrl, '/api/records?keyword=DYC-8899', {
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+    });
+    assert.equal(userIdSearch.response.status, 200);
+    assert.equal(userIdSearch.body.records.some((record) => record.id === recordId), true);
+
     const leadRename = await request(baseUrl, `/api/records/${recordId}`, {
       method: 'PATCH',
       headers: { Authorization: `Bearer ${daijie.accessToken}` },
@@ -820,6 +834,13 @@ test('record titles can be renamed only by owner or admin', async () => {
     });
     assert.equal(adminRename.response.status, 200);
     assert.equal(adminRename.body.record.title, '管理员复核标题');
+
+    const invalidUserId = await request(baseUrl, `/api/records/${recordId}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+      body: JSON.stringify({ externalUserId: 'x'.repeat(81) }),
+    });
+    assert.equal(invalidUserId.response.status, 400);
   } finally {
     server.close();
   }

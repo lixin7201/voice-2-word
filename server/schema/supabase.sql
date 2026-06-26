@@ -49,6 +49,7 @@ create table if not exists audio_records (
   source_page_url text,
   source_page_title text,
   source_media_url_hash text,
+  external_user_id text,
   original_file_name text,
   mime_type text,
   file_size bigint,

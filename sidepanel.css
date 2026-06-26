@@ -690,6 +690,20 @@ textarea:focus {
   gap: 8px;
 }
 
+.history-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: min(260px, 100%);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.history-search input {
+  min-width: 180px;
+}
+
 .history-item {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -1099,6 +1113,13 @@ textarea:focus {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
+}
+
+.record-user-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
 }
 
 .progress-box {
@@ -2586,6 +2607,7 @@ textarea:focus {
 @media (max-width: 360px) {
   .grid-2,
   .stats,
+  .record-user-form,
   .processing-mode-grid {
     grid-template-columns: 1fr;
   }

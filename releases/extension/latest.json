@@ -1,12 +1,12 @@
 {
   "name": "大宜宾录音助手",
-  "version": "0.1.7",
-  "minSupportedVersion": "0.1.7",
-  "releasedAt": "2026-06-26T03:12:30.675Z",
+  "version": "0.1.8",
+  "minSupportedVersion": "0.1.8",
+  "releasedAt": "2026-06-26T03:42:22.121Z",
   "changelog": [
-    "分享选择框改为按钮旁弹出式布局",
-    "点击分享后立即显示录音、逐字稿、总结勾选项"
+    "新增录音用户 ID 手动填写和保存",
+    "历史页支持按用户 ID 搜索录音和跟单"
   ],
-  "downloadUrl": "http://lixindemac-studio.local:8127/releases/extension/voice-to-word-extension-0.1.7.zip",
-  "sha256": "767693d6b6082a40b1708f117fb7b4fa44d4429dba936c60bbf5f52394df6de0"
+  "downloadUrl": "http://lixindemac-studio.local:8127/releases/extension/voice-to-word-extension-0.1.8.zip",
+  "sha256": "a5285cf6f87777ff6b4a0596ddf8c35391b4b40f3c865e9315ccbe39c2e4b652"
 }

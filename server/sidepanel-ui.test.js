@@ -776,6 +776,7 @@ test('admin history defaults to employee groups with collapsible record lists', 
       templateType: 'meeting_minutes',
       followupType: 'none',
       titleSource: 'manual',
+      externalUserId: 'DYC-1001',
     },
     {
       id: 'rec-2',
@@ -793,11 +794,19 @@ test('admin history defaults to employee groups with collapsible record lists', 
   const html = api.renderHistory();
 
   assert.match(html, /data-action="history-group" data-group="employee"/);
+  assert.match(html, /id="history-search"/);
   assert.match(html, /泡泡/);
   assert.match(html, /待重试 1/);
   assert.match(html, /data-expanded="1"/);
   assert.match(html, /岚岚/);
   assert.match(html, /data-expanded="0"/);
+
+  api.appState.historyQuery = 'DYC-1001';
+  const filteredHtml = api.renderHistory();
+  assert.match(filteredHtml, /岚岚录音/);
+  assert.match(filteredHtml, /用户 ID：DYC-1001/);
+  assert.match(filteredHtml, /data-expanded="1"/);
+  assert.doesNotMatch(filteredHtml, /泡泡录音/);
 });
 
 test('detail page renders horizontal tabs and keeps panel state', () => {
@@ -816,6 +825,7 @@ test('detail page renders horizontal tabs and keeps panel state', () => {
     transcript: { corrected_text: '第一段', segments_json: [] },
     audioUrl: '/api/records/rec_1/audio',
     summary: { summary_markdown: '# 总结', overview_card_json: {}, mind_map_json: { topic: '家具广告合作沟通', children: [] } },
+    externalUserId: 'DYC-8899',
     notes: [],
   };
 
@@ -830,6 +840,8 @@ test('detail page renders horizontal tabs and keeps panel state', () => {
   assert.match(html, /思维导图/);
   assert.match(html, /id="summary-section"/);
   assert.match(html, /data-action="open-share-panel"/);
+  assert.match(html, /id="record-user-form"/);
+  assert.match(html, /value="DYC-8899"/);
   assert.match(html, /aria-expanded="false"/);
   assert.doesNotMatch(html, /<audio id="record-audio"/);
 

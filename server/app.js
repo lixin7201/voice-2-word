@@ -380,6 +380,7 @@ async function routeRequest(req, res, store, config) {
       source_page_url: body.sourcePageUrl || '',
       source_page_title: body.sourcePageTitle || '',
       source_media_url_hash: body.candidateUrl ? mediaUrlFingerprint(body.candidateUrl) : '',
+      external_user_id: normalizeExternalUserId(body.externalUserId || ''),
       original_file_name: '',
       mime_type: '',
       file_size: 0,
@@ -420,14 +421,26 @@ async function routeRequest(req, res, store, config) {
     const record = requireRecord(recordIdMatch[1], store);
     ensureCanEditRecord(auth.employee, record, store);
     const body = await readJson(req);
-    const title = normalizeRecordTitle(body.title);
-    const updated = store.update('audio_records', record.id, {
-      title,
-      title_source: 'manual',
-      title_locked: true,
-      title_updated_at: new Date().toISOString(),
-    });
-    addAudit(store, auth.employee.id, 'rename_record', 'audio_record', record.id, { title });
+    const updates = {};
+    const auditPayload = {};
+    if (Object.hasOwn(body, 'title')) {
+      const title = normalizeRecordTitle(body.title);
+      Object.assign(updates, {
+        title,
+        title_source: 'manual',
+        title_locked: true,
+        title_updated_at: new Date().toISOString(),
+      });
+      auditPayload.title = title;
+    }
+    if (Object.hasOwn(body, 'externalUserId')) {
+      const externalUserId = normalizeExternalUserId(body.externalUserId);
+      updates.external_user_id = externalUserId;
+      auditPayload.externalUserId = externalUserId;
+    }
+    if (!Object.keys(updates).length) throw httpError(400, '没有可保存的录音信息');
+    const updated = store.update('audio_records', record.id, updates);
+    addAudit(store, auth.employee.id, auditPayload.title ? 'rename_record' : 'edit_record_user_id', 'audio_record', record.id, auditPayload);
     sendJson(res, 200, { record: serializeRecord(updated, store) });
     return;
   }
@@ -1149,6 +1162,7 @@ function serializeRecord(record, store, options = {}) {
     sourceType: record.source_type,
     sourcePageUrl: record.source_page_url,
     sourcePageTitle: record.source_page_title,
+    externalUserId: record.external_user_id || '',
     originalFileName: record.original_file_name,
     audioUrl: record.original_file_name ? `/api/records/${record.id}/audio` : '',
     mimeType: record.mime_type,
@@ -1418,7 +1432,7 @@ function filterRecord(record, params, store) {
   const keyword = params.get('keyword')?.trim().toLowerCase();
   if (keyword) {
     const owner = store.findById('employees', record.owner_employee_id)?.display_name || '';
-    const haystack = [record.title, record.original_file_name, record.source_page_title, owner].join('\n').toLowerCase();
+    const haystack = [record.title, record.original_file_name, record.source_page_title, record.external_user_id, owner].join('\n').toLowerCase();
     if (!haystack.includes(keyword)) return false;
   }
   return true;
@@ -2024,6 +2038,12 @@ function normalizeRecordTitle(value) {
   if (!title) throw httpError(400, '标题不能为空');
   if (title.length > 60) throw httpError(400, '标题最多 60 字');
   return title;
+}
+
+function normalizeExternalUserId(value) {
+  const externalUserId = String(value || '').replace(/\s+/g, ' ').trim();
+  if (externalUserId.length > 80) throw httpError(400, '用户 ID 最多 80 字');
+  return externalUserId;
 }
 
 function updateOwnProfile(employee, body, store) {

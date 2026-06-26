@@ -30,6 +30,7 @@ const appState = {
   records: [],
   selectedRecordIds: {},
   historyFilter: 'all',
+  historyQuery: '',
   historyGroupBy: 'auto',
   historyExpandedGroups: {},
   detail: null,
@@ -689,6 +690,10 @@ function renderHistory() {
         <button class="btn" data-action="refresh-records">刷新</button>
       </div>
       <div class="history-toolbar">
+        <label class="history-search">
+          <span>搜索</span>
+          <input id="history-search" value="${escapeHtml(appState.historyQuery)}" placeholder="搜索标题 / 用户 ID">
+        </label>
         <button class="btn ${appState.historyFilter === 'all' ? 'primary' : ''}" type="button" data-action="history-filter" data-filter="all">全部</button>
         <button class="btn ${appState.historyFilter === 'test' ? 'primary' : ''}" type="button" data-action="history-filter" data-filter="test">只看测试数据</button>
         ${renderHistoryGroupControls(groupBy)}
@@ -751,6 +756,7 @@ function renderRecordList(records) {
               <span class="badge ${escapeHtml(record.status)}">${statusLabel(record.status)}</span>
             </div>
             <div class="meta">${escapeHtml(record.owner?.displayName || '')} · ${escapeHtml(record.department?.name || '未分配')} · ${escapeHtml(templateLabel(record.templateType))} · ${escapeHtml(followupLabel(record.followupType || 'none'))} · ${escapeHtml(titleSourceLabel(record.titleSource))}</div>
+            ${record.externalUserId ? `<div class="meta">用户 ID：${escapeHtml(record.externalUserId)}</div>` : ''}
             <div class="meta">${formatDate(record.createdAt)}${record.errorMessage ? ` · ${escapeHtml(record.errorMessage)}` : ''}</div>
             ${record.titleSource === 'filename' && record.status === 'completed' && !record.aiTitle ? '<div class="hint">可进入详情页改名。</div>' : ''}
           </div>
@@ -765,8 +771,23 @@ function renderRecordList(records) {
 }
 
 function filteredHistoryRecords() {
-  if (appState.historyFilter !== 'test') return appState.records;
-  return appState.records.filter((record) => isLikelyTestRecord(record));
+  const query = appState.historyQuery.trim().toLowerCase();
+  return appState.records.filter((record) => {
+    if (appState.historyFilter === 'test' && !isLikelyTestRecord(record)) return false;
+    if (!query) return true;
+    return historyRecordSearchText(record).includes(query);
+  });
+}
+
+function historyRecordSearchText(record) {
+  return [
+    record.title,
+    record.originalFileName,
+    record.sourcePageTitle,
+    record.externalUserId,
+    record.owner?.displayName,
+    record.department?.name,
+  ].join('\n').toLowerCase();
 }
 
 function effectiveHistoryGroupBy() {
@@ -828,6 +849,7 @@ function historyGroupCounts(records) {
 }
 
 function historyGroupExpanded(group) {
+  if (appState.historyQuery.trim()) return true;
   if (Object.hasOwn(appState.historyExpandedGroups, group.id)) return Boolean(appState.historyExpandedGroups[group.id]);
   return group.counts.failed > 0 || group.counts.transcribed > 0 || group.counts.inProgress > 0;
 }
@@ -858,6 +880,7 @@ function renderDetail() {
         <button class="btn ghost" data-view="history">返回历史</button>
         ${renderTitleEditor(record)}
         <div class="meta">${escapeHtml(record.owner?.displayName || '')} · ${escapeHtml(record.department?.name || '')} · ${formatDate(record.createdAt)}</div>
+        ${renderExternalUserIdEditor(record)}
         <div class="btn-row">
           <span class="share-popover-wrap">
             <button class="btn" type="button" data-action="open-share-panel" aria-expanded="${appState.sharePanelOpen ? 'true' : 'false'}">分享</button>
@@ -993,6 +1016,10 @@ function renderFollowupEditor(record) {
   const followup = record.followupForm || {};
   return `
     <form id="followup-form" class="form followup-editor">
+      <div class="field">
+        <label for="externalUserIdInFollowup">用户 ID</label>
+        <input id="externalUserIdInFollowup" name="externalUserId" value="${escapeHtml(record.externalUserId || '')}" placeholder="例如：客户后台 ID / 会员 ID">
+      </div>
       <div class="grid-2">
         <div class="field">
           <label for="followup-stage">阶段</label>
@@ -1349,6 +1376,7 @@ function renderFollowupResultPanel(record) {
   const followup = record.followupForm || {};
   const fields = followup.fields_json && typeof followup.fields_json === 'object' ? followup.fields_json : {};
   const fieldRows = [
+    ['用户 ID', record.externalUserId || '待填写'],
     ['客户/对象名称', followup.company_name || followup.customer_name || fields.customerName || fields.companyName],
     ['业务类型', businessTypeLabel(followup.business_type || record.followupType)],
     ['当前阶段', stageLabel(followup.stage || fields.stage)],
@@ -1405,6 +1433,7 @@ function followupFormHasUnsavedChanges(record) {
   if (!form) return false;
   const followup = record.followupForm || {};
   return (
+    String(form.externalUserId?.value || '') !== String(record.externalUserId || '') ||
     String(form.stage?.value || '') !== String(followup.stage || '') ||
     String(form.companyName?.value || '') !== String(followup.company_name || followup.customer_name || '') ||
     String(form.statusLabel?.value || '') !== String(followup.status_label || '') ||
@@ -1414,10 +1443,11 @@ function followupFormHasUnsavedChanges(record) {
 }
 
 function formatFollowupCopy(record) {
+  const userIdField = ['用户ID', (item) => item.externalUserId || ''];
   const type = followupCopyType(record);
-  if (type === 'matchmaker') return formatCopyFields(record, matchmakerCopyFields());
-  if (type === 'recruitment') return formatCopyFields(record, recruitmentCopyFields());
-  return formatCopyFields(record, generalCustomerCopyFields());
+  if (type === 'matchmaker') return formatCopyFields(record, [userIdField, ...matchmakerCopyFields()]);
+  if (type === 'recruitment') return formatCopyFields(record, [userIdField, ...recruitmentCopyFields()]);
+  return formatCopyFields(record, [userIdField, ...generalCustomerCopyFields()]);
 }
 
 function followupCopyType(record) {
@@ -2697,6 +2727,16 @@ function bindCurrentView() {
     });
   });
 
+  const historySearch = document.getElementById('history-search');
+  if (historySearch) historySearch.addEventListener('input', (event) => {
+    const value = event.currentTarget.value;
+    appState.historyQuery = value;
+    render();
+    const nextInput = document.getElementById('history-search');
+    nextInput?.focus?.();
+    nextInput?.setSelectionRange?.(value.length, value.length);
+  });
+
   onClick('button[data-action="archive-record"]', (_event, button) => deleteRecord(button.dataset.id, 'archive'));
   onClick('button[data-action="purge-record"]', (_event, button) => deleteRecord(button.dataset.id, 'purge'));
   onClick('button[data-action="bulk-archive-records"]', () => bulkDeleteRecords('archive'));
@@ -2731,6 +2771,9 @@ function bindCurrentView() {
   });
 
   onClick('button[data-action="save-title"]', saveRecordTitle);
+  const recordUserForm = document.getElementById('record-user-form');
+  onSubmit(recordUserForm, saveRecordUserId, { action: 'record.user_id.save' });
+  onClick('button[data-action="save-record-user-id"]', saveRecordUserId);
 
   const noteForm = document.getElementById('note-form');
   onSubmit(noteForm, saveNote, { action: 'note.save' });
@@ -3719,6 +3762,27 @@ async function saveRecordTitle(event) {
   }, true);
 }
 
+async function saveRecordUserId(event) {
+  event?.preventDefault?.();
+  if (!appState.detail) return;
+  const form = formFromEvent(event, 'record-user-form') || document.getElementById('record-user-form');
+  const externalUserId = form?.externalUserId?.value.trim() || '';
+  await saveExternalUserId(externalUserId, '用户 ID 已保存');
+}
+
+async function saveExternalUserId(externalUserId, successMessage) {
+  if (!appState.detail) return;
+  await runBusy(async () => {
+    const body = await api(`/api/records/${appState.detail.id}`, {
+      method: 'PATCH',
+      body: { externalUserId },
+    });
+    appState.detail = body.record;
+    await loadRecords();
+    setStatus(successMessage, 'success');
+  }, true);
+}
+
 async function saveNote(event) {
   const form = formFromEvent(event, 'note-form');
   if (!form) return;
@@ -3856,6 +3920,13 @@ async function saveFollowup(event) {
   const form = formFromEvent(event, 'followup-form');
   if (!form) return;
   await runBusy(async () => {
+    if (String(form.externalUserId?.value || '').trim() !== String(appState.detail.externalUserId || '')) {
+      const body = await api(`/api/records/${appState.detail.id}`, {
+        method: 'PATCH',
+        body: { externalUserId: form.externalUserId.value.trim() },
+      });
+      appState.detail = body.record;
+    }
     await api(`/api/records/${appState.detail.id}/followup`, {
       method: 'PATCH',
       body: {
@@ -4495,6 +4566,18 @@ function renderTitleEditor(record) {
       <button class="btn primary" type="button" data-action="save-title" ${appState.busy ? 'disabled' : ''}>保存</button>
       <button class="btn" type="button" data-action="cancel-title">取消</button>
     </div>
+  `;
+}
+
+function renderExternalUserIdEditor(record) {
+  return `
+    <form id="record-user-form" class="record-user-form">
+      <div class="field">
+        <label for="record-external-user-id">用户 ID</label>
+        <input id="record-external-user-id" name="externalUserId" value="${escapeHtml(record.externalUserId || '')}" placeholder="打完电话后填客户后台 ID">
+      </div>
+      <button class="btn primary" type="button" data-action="save-record-user-id" ${appState.busy ? 'disabled' : ''}>保存 ID</button>
+    </form>
   `;
 }
 
