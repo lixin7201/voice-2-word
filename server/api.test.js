@@ -785,9 +785,17 @@ test('record titles and user ids can be edited and searched', async () => {
         title: '招聘客户电话',
         titleSource: 'manual',
         templateType: 'recruitment_followup',
+        externalUserId: '  DYC-7788  ',
       }),
     });
     const recordId = create.body.record.id;
+    assert.equal(create.body.record.externalUserId, 'DYC-7788');
+
+    const createdUserIdSearch = await request(baseUrl, '/api/records?keyword=DYC-7788', {
+      headers: { Authorization: `Bearer ${lanlan.accessToken}` },
+    });
+    assert.equal(createdUserIdSearch.response.status, 200);
+    assert.equal(createdUserIdSearch.body.records.some((record) => record.id === recordId), true);
 
     const invalid = await request(baseUrl, `/api/records/${recordId}`, {
       method: 'PATCH',
@@ -841,6 +849,85 @@ test('record titles and user ids can be edited and searched', async () => {
       body: JSON.stringify({ externalUserId: 'x'.repeat(81) }),
     });
     assert.equal(invalidUserId.response.status, 400);
+  } finally {
+    server.close();
+  }
+});
+
+test('record keyword search includes follow-up, summary, and transcript text', async () => {
+  const now = new Date().toISOString();
+  const data = createInitialData(now);
+  const lanlan = data.employees.find((employee) => employee.display_name === '岚岚');
+  const recruitmentDept = data.departments.find((department) => department.name === '招聘部');
+  const record = {
+    ...completedRecord('rec-keyword-search', lanlan, recruitmentDept.id, now),
+    title: '普通客户电话',
+    template_type: 'recruitment_followup',
+    followup_type: 'recruitment',
+    external_user_id: 'DYC-3301',
+  };
+  data.audio_records.push(record);
+  data.summaries.push({
+    id: 'summary-keyword-search',
+    audio_record_id: record.id,
+    template_type: 'recruitment_followup',
+    summary_markdown: '会议纪要关键词：预算复核完成。',
+    overview_card_json: {},
+    mind_map_json: {},
+    structured_json: { action: '确认合同条款' },
+    model_provider: 'local-dev',
+    model_name: 'local-template',
+    model_error: '',
+    quality_status: 'ai_ok',
+    quality_reason: '',
+    input_transcript_chars: 30,
+    summary_chars: 20,
+    placeholder_count: 0,
+    provider_errors_json: [],
+    version: 1,
+    created_at: now,
+    updated_at: now,
+  });
+  data.followup_forms.push({
+    id: 'followup-keyword-search',
+    audio_record_id: record.id,
+    business_type: 'recruitment',
+    stage: 'mid_late_effective_followup',
+    customer_name: '',
+    company_name: '关键词测试企业',
+    status_label: '推进中',
+    suggested_tag: '重点客户',
+    followup_markdown: '跟单正文关键词：下周回访会员套餐。',
+    fields_json: { hiringRoles: '茶艺师', nextAction: '补发报价单' },
+    manual_edited: false,
+    created_at: now,
+    updated_at: now,
+  });
+  data.transcripts.push({
+    id: 'transcript-keyword-search',
+    audio_record_id: record.id,
+    asr_provider: 'local-dev',
+    asr_task_id: '',
+    raw_text: '逐字稿关键词：客户提到周末招聘会。',
+    corrected_text: '逐字稿关键词：客户提到周末招聘会。',
+    segments_json: [{ id: 'seg-1', startMs: 0, endMs: 1000, text: '周末招聘会' }],
+    speaker_aliases_json: {},
+    duration_ms: 1000,
+    cost_cny: 0,
+    created_at: now,
+    updated_at: now,
+  });
+
+  const { server, baseUrl } = await startTestServer({ initialData: data, recoverProcessing: false });
+  try {
+    const loginBody = await login(baseUrl, '岚岚');
+    for (const keyword of ['DYC-3301', '补发报价单', '下周回访会员套餐', '预算复核', '周末招聘会', '招聘跟单']) {
+      const result = await request(baseUrl, `/api/records?keyword=${encodeURIComponent(keyword)}`, {
+        headers: { Authorization: `Bearer ${loginBody.accessToken}` },
+      });
+      assert.equal(result.response.status, 200);
+      assert.equal(result.body.records.some((item) => item.id === record.id), true, keyword);
+    }
   } finally {
     server.close();
   }

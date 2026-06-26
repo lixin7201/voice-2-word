@@ -76,6 +76,7 @@ const appState = {
   actionStates: {},
   candidateJobs: {},
   candidateTitleDrafts: {},
+  candidateExternalUserIdDrafts: {},
   uploadDraft: {
     title: '',
     notice: '',
@@ -512,6 +513,7 @@ function renderCandidateCard(candidate, index, primary) {
         </div>
         ${candidate.uploadable === false ? `<div class="status error">${escapeHtml(candidate.unsupportedReason || '该候选暂不能直接上传为单个录音文件。')}</div>` : ''}
         ${duplicate ? renderCandidateDuplicateNotice(candidate) : ''}
+        ${isCaptureFollowupMode() ? renderCandidateExternalUserIdInput(candidate, index) : ''}
         ${renderCandidateJob(job, index)}
         ${primary && candidate.uploadable !== false ? '<div class="hint candidate-hint">候选页不直接播放录音；点击生成纪要后，可在详情页播放和跳转逐字稿时间戳。</div>' : ''}
       </div>
@@ -545,7 +547,42 @@ function renderCandidateAction(candidate, index, primary, job = {}) {
       </div>
     `;
   }
-  return `<button class="btn primary candidate-action" type="button" data-action="upload-candidate" data-index="${index}">${primary ? '生成纪要' : '使用这条生成'}</button>`;
+  const followupMode = isCaptureFollowupMode();
+  const label = primary ? (followupMode ? '生成跟单' : '生成纪要') : (followupMode ? '使用这条生成跟单' : '使用这条生成');
+  return `<button class="btn primary candidate-action" type="button" data-action="upload-candidate" data-index="${index}">${escapeHtml(label)}</button>`;
+}
+
+function renderCandidateExternalUserIdInput(candidate, index) {
+  const key = candidateExternalUserIdKey(candidate, index);
+  const value = appState.candidateExternalUserIdDrafts[key] || '';
+  return `
+    <div class="field compact-field candidate-user-id-field">
+      <label for="candidate-user-id-${index}">用户 ID</label>
+      <input id="candidate-user-id-${index}" data-candidate-user-id="${index}" data-candidate-user-id-key="${escapeHtml(key)}" value="${escapeHtml(value)}" placeholder="输入客户/用户 ID，方便稍后搜索">
+      <div class="hint">提交后可继续下一通，处理完成后可在历史中搜索该 ID</div>
+    </div>
+  `;
+}
+
+function candidateExternalUserIdKey(candidate = {}, index = '') {
+  return [
+    candidate.url,
+    candidate.pageUrl,
+    candidate.recordingTitle,
+    candidate.name,
+  ].map((value) => String(value || '').trim()).join('|') || String(index);
+}
+
+function readCandidateExternalUserId(candidate, index) {
+  const key = candidateExternalUserIdKey(candidate, index);
+  const input = document.querySelector(`[data-candidate-user-id="${index}"]`);
+  const value = String(input?.value ?? appState.candidateExternalUserIdDrafts[key] ?? '').trim();
+  appState.candidateExternalUserIdDrafts[key] = value;
+  return value;
+}
+
+function clearCandidateExternalUserId(candidate, index) {
+  delete appState.candidateExternalUserIdDrafts[candidateExternalUserIdKey(candidate, index)];
 }
 
 function candidateBadgeClass(candidate, duplicate) {
@@ -873,7 +910,7 @@ function selectedRecordIds() {
 function renderDetail() {
   const record = appState.detail;
   if (!record) return '<section class="glass section"><div class="empty">未选择记录</div></section>';
-  if (!detailTabItems(record).some((item) => item.id === appState.detailTab)) appState.detailTab = 'summary';
+  if (!detailTabItems(record).some((item) => item.id === appState.detailTab)) appState.detailTab = defaultDetailTab(record);
   return `
     <div class="stack">
       <section class="glass section detail-header">
@@ -903,13 +940,30 @@ function renderDetail() {
 }
 
 function detailTabItems(record = {}) {
+  if (isFollowupRecord(record)) {
+    return [
+      { id: 'followup', label: '跟单信息' },
+      { id: 'transcript', label: '逐字稿' },
+      { id: 'mind_map', label: '思维导图' },
+      { id: 'notes', label: '备注' },
+      { id: 'downloads', label: '下载' },
+    ];
+  }
   return [
     { id: 'summary', label: '会议概览' },
     { id: 'transcript', label: '会议逐字稿' },
     { id: 'mind_map', label: '思维导图' },
-    { id: 'followup', label: normalizeFollowupTypeUi(record.followupType, record.templateType) === 'none' ? '备注' : '跟单/备注' },
+    { id: 'notes', label: '备注' },
     { id: 'downloads', label: '下载' },
   ];
+}
+
+function isFollowupRecord(record = {}) {
+  return normalizeFollowupTypeUi(record.followupType, record.templateType) !== 'none' || Boolean(record.followupForm);
+}
+
+function defaultDetailTab(record = {}) {
+  return isFollowupRecord(record) ? 'followup' : 'summary';
 }
 
 function renderDetailTabs(record) {
@@ -962,10 +1016,7 @@ function renderDetailTab(record) {
     return renderMindMapTab(record);
   }
   if (appState.detailTab === 'followup') {
-    return `
-      ${normalizeFollowupTypeUi(record.followupType, record.templateType) === 'none' ? '' : renderFollowupEditor(record)}
-      <div class="detail-notes">${renderNotesPanel(record)}</div>
-    `;
+    return renderFollowupResultPanel(record);
   }
   if (appState.detailTab === 'notes') {
     return renderNotesPanel(record);
@@ -1317,7 +1368,6 @@ function renderDownloadSelect(target, label, enabled) {
 function renderSummaryPanel(record) {
   const summary = record.summary || {};
   const summaryMarkdown = summary.summary_markdown || '';
-  const showFollowup = normalizeFollowupTypeUi(record.followupType, record.templateType) !== 'none' || record.followupForm;
   return `
     <div class="summary-workspace">
       <div class="summary-toolbar">
@@ -1325,7 +1375,7 @@ function renderSummaryPanel(record) {
         <button class="btn primary" type="button" data-action="summarize-record" ${appState.busy ? 'disabled' : ''}>${summaryMarkdown ? '重新生成' : '生成纪要'}</button>
       </div>
       ${renderSummaryQualityNotice(record)}
-      ${showFollowup ? renderFollowupResultPanel(record) : renderMeetingResultPanel(record)}
+      ${renderMeetingResultPanel(record)}
     </div>
   `;
 }
@@ -2429,6 +2479,11 @@ function processingPickerState(prefix, selectedTemplate, selectedFollowup) {
   return { mode, templateType, followupType };
 }
 
+function isCaptureFollowupMode() {
+  const state = processingPickerState('capture', currentTemplateType(), currentFollowupType());
+  return normalizeFollowupTypeUi(state.followupType, state.templateType) !== 'none';
+}
+
 function meetingTemplateOptionsForPicker() {
   const templates = appState.templates.length ? appState.templates : [
     { value: 'meeting_minutes', label: '推理总结' },
@@ -2681,6 +2736,11 @@ function bindCurrentView() {
   document.querySelectorAll('[data-candidate-title]').forEach((input) => {
     input.addEventListener('input', () => {
       appState.candidateTitleDrafts[input.dataset.candidateTitle] = input.value;
+    });
+  });
+  document.querySelectorAll('[data-candidate-user-id-key]').forEach((input) => {
+    input.addEventListener('input', () => {
+      appState.candidateExternalUserIdDrafts[input.dataset.candidateUserIdKey] = input.value;
     });
   });
 
@@ -3329,6 +3389,8 @@ async function uploadCandidate(index, options = {}) {
   }
   const templateType = document.getElementById('capture-template')?.value || currentTemplateType();
   const followupType = document.getElementById('capture-followup')?.value || currentFollowupType();
+  const followupMode = normalizeFollowupTypeUi(followupType, templateType) !== 'none';
+  const externalUserId = followupMode ? readCandidateExternalUserId(candidate, index) : '';
   const titleInput = document.querySelector(`[data-candidate-title="${index}"]`);
   const defaultTitle = titleInput?.dataset.defaultTitle || defaultCandidateTitle(candidate);
   const title = String(titleInput?.value || defaultTitle).trim() || defaultTitle;
@@ -3365,6 +3427,7 @@ async function uploadCandidate(index, options = {}) {
       titleSource,
       templateType,
       followupType,
+      ...(followupMode ? { externalUserId } : {}),
       candidateUrl: candidate.url,
       forceDuplicate: options.forceDuplicate === true,
     });
@@ -3385,8 +3448,15 @@ async function uploadCandidate(index, options = {}) {
       phase: 'processing',
       title,
       recordId: record.id,
-      message: '录音已上传，后端正在处理。',
+      message: followupMode ? '已提交，可继续下一通电话。后台正在处理。' : '录音已上传，后端正在处理。',
     });
+    clearCandidateExternalUserId(candidate, index);
+    if (followupMode) {
+      await loadRecords();
+      setStatus('跟单已提交，可继续下一通电话。后台处理完成后可在历史中搜索用户 ID。', 'success');
+      render();
+      return;
+    }
     await openRecord(record.id);
     await loadRecords();
     setStatus('录音已上传，任务已进入后端处理。', 'success');
@@ -3662,7 +3732,7 @@ async function openRecord(recordId) {
   await runBusy(async () => {
     const body = await api(`/api/records/${recordId}`);
     appState.detail = body.record;
-    appState.detailTab = 'summary';
+    appState.detailTab = defaultDetailTab(appState.detail);
     appState.view = 'detail';
     appState.titleEditing = false;
     appState.titleDraft = null;
@@ -3938,7 +4008,7 @@ async function saveFollowup(event) {
       },
     });
     await openRecord(appState.detail.id);
-    appState.detailTab = 'summary';
+    appState.detailTab = defaultDetailTab(appState.detail);
     setStatus('跟单已保存', 'success');
   }, true);
 }
@@ -3974,7 +4044,7 @@ async function summarizeRecord() {
       status: 'summarizing',
     };
     await rememberProcessingDefaults(templateType, followupType);
-    appState.detailTab = 'summary';
+    appState.detailTab = defaultDetailTab(appState.detail);
     setStatus('已开始生成总结，完成后会自动刷新。', 'success');
   }, true);
 }

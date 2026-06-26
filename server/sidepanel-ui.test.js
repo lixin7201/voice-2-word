@@ -605,12 +605,13 @@ test('summary workbench renders audio, clickable transcript, mind map, and downl
   assert.match(editingHtml, /data-action="save-speaker"/);
   assert.match(editingHtml, /应用到该说话人的所有片段/);
 
-  const followupHtml = api.renderSummaryWorkspace({
+  api.appState.detail = {
     id: 'rec_2',
     title: '客户沟通录音',
     status: 'completed',
     templateType: 'recruitment_followup',
     followupType: 'recruitment',
+    externalUserId: 'DYC-1001',
     audioUrl: '/api/records/rec_2/audio',
     transcript: {
       corrected_text: '客户希望下周确认会员套餐',
@@ -631,8 +632,15 @@ test('summary workbench renders audio, clickable transcript, mind map, and downl
         risk: '预算待确认',
       },
     },
-  });
+  };
+  api.appState.detailTab = 'summary';
+  const followupHtml = api.renderDetail();
   assert.match(followupHtml, /跟单信息/);
+  assert.equal(api.appState.detailTab, 'followup');
+  assert.match(followupHtml, /data-detail-tab="followup" aria-selected="true"/);
+  assert.match(followupHtml, /用户 ID/);
+  assert.match(followupHtml, /DYC-1001/);
+  assert.match(followupHtml, /name="externalUserId" value="DYC-1001"/);
   assert.match(followupHtml, /客户\/对象名称/);
   assert.match(followupHtml, /测试企业/);
   assert.match(followupHtml, /中后期有效跟进/);
@@ -665,6 +673,7 @@ test('follow-up copy text uses fixed business fields with empty missing values',
   const recruitmentText = api.formatFollowupCopy({
     templateType: 'recruitment_followup',
     followupType: 'recruitment',
+    externalUserId: 'DYC-3301',
     followupForm: {
       business_type: 'recruitment',
       stage: 'mid_late_effective_followup',
@@ -680,6 +689,7 @@ test('follow-up copy text uses fixed business fields with empty missing values',
       },
     },
   });
+  assert.match(recruitmentText, /^【用户ID】：DYC-3301/m);
   assert.match(recruitmentText, /^【跟进阶段】：中后期有效跟进/m);
   assert.match(recruitmentText, /【企业\/客户名称】：测试企业/);
   assert.match(recruitmentText, /【招聘岗位】：服务员/);
@@ -1484,6 +1494,120 @@ test('capture page shows one current recording and folds other candidates', () =
   assert.match(html, /data-action="upload-candidate" data-index="0"/);
   assert.match(html, /还有 1 个其它候选，通常不用管/);
   assert.doesNotMatch(html, /https:\/\/web\.plaud\.cn\/api\/file/);
+});
+
+test('capture candidates ask for user id only in follow-up mode', () => {
+  const { api } = loadSidepanel();
+  api.appState.templates = [{ value: 'meeting_minutes', label: '会议纪要' }];
+  api.appState.followupOptions = [
+    { value: 'none', label: '不生成跟单' },
+    { value: 'recruitment', label: '招聘跟单' },
+  ];
+  api.appState.candidates = [{
+    url: 'https://web.plaud.cn/api/file?id=current',
+    name: '客户录音.mp3',
+    type: 'mp3',
+    source: 'network:xmlhttprequest',
+    size: 3 * 1024 * 1024,
+    uploadable: true,
+  }];
+
+  const meetingHtml = api.renderCapture();
+  assert.match(meetingHtml, />生成纪要<\/button>/);
+  assert.doesNotMatch(meetingHtml, /candidate-user-id-0/);
+  assert.doesNotMatch(meetingHtml, /输入客户\/用户 ID/);
+
+  api.appState.processingChoices['capture-followup'] = 'recruitment';
+  api.appState.processingChoices['capture-template'] = 'recruitment_followup';
+  const followupHtml = api.renderCapture();
+  assert.match(followupHtml, /candidate-user-id-0/);
+  assert.match(followupHtml, /输入客户\/用户 ID，方便稍后搜索/);
+  assert.match(followupHtml, /提交后可继续下一通，处理完成后可在历史中搜索该 ID/);
+  assert.match(followupHtml, />生成跟单<\/button>/);
+});
+
+test('follow-up candidate upload sends user id and stays on capture page', async () => {
+  const dom = createTestDom();
+  const { api, fetchCalls } = loadSidepanel({
+    dom,
+    fetchImpl: async (url, requestOptions, calls) => {
+      calls.push({ url, requestOptions });
+      const target = String(url);
+      if (target.startsWith('https://web.plaud.cn/')) {
+        return {
+          ok: true,
+          status: 200,
+          blob: async () => new Blob(['audio'], { type: 'audio/mpeg' }),
+        };
+      }
+      if (target.endsWith('/api/records') && requestOptions?.method === 'POST') {
+        const body = JSON.parse(requestOptions.body);
+        return {
+          ok: true,
+          status: 201,
+          text: async () => JSON.stringify({
+            record: {
+              id: 'rec_followup',
+              title: body.title,
+              status: 'created',
+              templateType: body.templateType,
+              followupType: body.followupType,
+              externalUserId: body.externalUserId,
+            },
+          }),
+        };
+      }
+      if (target.includes('/api/records/rec_followup/upload')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ record: { id: 'rec_followup', status: 'uploaded' } }),
+        };
+      }
+      if (target.endsWith('/api/records')) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ records: [] }),
+        };
+      }
+      throw new Error(`Unexpected fetch ${target}`);
+    },
+  });
+  api.appState.view = 'capture';
+  api.appState.processingChoices['capture-followup'] = 'recruitment';
+  api.appState.processingChoices['capture-template'] = 'recruitment_followup';
+  api.appState.candidates = [{
+    url: 'https://web.plaud.cn/api/file?id=current',
+    name: '客户录音.mp3',
+    type: 'mp3',
+    source: 'network:xmlhttprequest',
+    size: 1024,
+    uploadable: true,
+  }];
+  api.render();
+  const userIdInput = dom.document.getElementById('candidate-user-id-0');
+  userIdInput.value = ' DYC-1001 ';
+
+  await api.uploadCandidate(0);
+
+  const createCall = fetchCalls.find((call) => String(call.url).endsWith('/api/records') && call.requestOptions?.method === 'POST');
+  assert.ok(createCall);
+  assert.deepEqual(JSON.parse(createCall.requestOptions.body), {
+    sourceType: 'web_capture',
+    sourcePageUrl: '',
+    sourcePageTitle: '',
+    title: '客户录音.mp3',
+    titleSource: 'filename',
+    templateType: 'recruitment_followup',
+    followupType: 'recruitment',
+    externalUserId: 'DYC-1001',
+    candidateUrl: 'https://web.plaud.cn/api/file?id=current',
+    forceDuplicate: false,
+  });
+  assert.equal(api.appState.view, 'capture');
+  assert.match(api.appState.status, /可继续下一通电话/);
+  assert.equal(api.appState.candidateJobs[0].recordId, 'rec_followup');
 });
 
 test('capture candidate renders duplicate record actions', () => {

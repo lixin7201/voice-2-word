@@ -1431,11 +1431,48 @@ function filterRecord(record, params, store) {
   if (params.get('templateType') && record.template_type !== params.get('templateType')) return false;
   const keyword = params.get('keyword')?.trim().toLowerCase();
   if (keyword) {
-    const owner = store.findById('employees', record.owner_employee_id)?.display_name || '';
-    const haystack = [record.title, record.original_file_name, record.source_page_title, record.external_user_id, owner].join('\n').toLowerCase();
-    if (!haystack.includes(keyword)) return false;
+    if (!recordSearchHaystack(record, store).includes(keyword)) return false;
   }
   return true;
+}
+
+function recordSearchHaystack(record, store) {
+  const owner = store.findById('employees', record.owner_employee_id)?.display_name || '';
+  const summary = store.table('summaries').find((item) => item.audio_record_id === record.id) || {};
+  const followup = store.table('followup_forms').find((item) => item.audio_record_id === record.id) || {};
+  const transcript = store.table('transcripts').find((item) => item.audio_record_id === record.id) || {};
+  const followupType = normalizeFollowupType(record.followup_type, record.template_type);
+  return [
+    record.title,
+    record.original_file_name,
+    record.source_page_title,
+    record.external_user_id,
+    owner,
+    optionLabel(TEMPLATE_OPTIONS, record.template_type),
+    optionLabel(FOLLOWUP_OPTIONS, followupType),
+    summary.summary_markdown,
+    jsonSearchText(summary.structured_json),
+    jsonSearchText(summary.overview_card_json),
+    followup.customer_name,
+    followup.company_name,
+    followup.status_label,
+    followup.suggested_tag,
+    followup.followup_markdown,
+    jsonSearchText(followup.fields_json),
+    transcript.corrected_text,
+    transcript.raw_text,
+    jsonSearchText(transcript.segments_json),
+  ].join('\n').toLowerCase();
+}
+
+function optionLabel(options, value) {
+  return options.find((option) => option.value === value)?.label || value || '';
+}
+
+function jsonSearchText(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value);
 }
 
 function shouldCheckWebCaptureDuplicate(body = {}) {

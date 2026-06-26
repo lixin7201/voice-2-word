@@ -327,8 +327,8 @@
       <aside class="download-card">
         <h2>下载入口</h2>
         <p class="meta-line">本页地址：<br><code>http://lixindemac-studio.local:8127/install</code></p>
-        <a id="downloadLink" class="choice" href="releases/extension/voice-to-word-extension-0.1.8.zip">下载最新版插件压缩包</a>
-        <p id="downloadMeta" class="meta-line">当前版本 0.1.8。下载后先解压，再到 Chrome 里加载解压后的文件夹。</p>
+        <a id="downloadLink" class="choice" href="releases/extension/voice-to-word-extension-0.1.9.zip">下载最新版插件压缩包</a>
+        <p id="downloadMeta" class="meta-line">当前版本 0.1.9。下载后先解压，再到 Chrome 里加载解压后的文件夹。</p>
         <p id="shaText" class="meta-line small"></p>
       </aside>
     </section>
@@ -389,7 +389,7 @@
             <strong>下载并解压</strong>
             <ol>
               <li>点击本页上方“下载最新版插件压缩包”。</li>
-              <li>下载后找到 <code>voice-to-word-extension-0.1.8.zip</code> 这类文件。</li>
+              <li>下载后找到 <code>voice-to-word-extension-0.1.9.zip</code> 这类文件。</li>
               <li>Windows 右键选择“全部解压缩”；Mac 双击 zip。</li>
               <li>把解压出的文件夹放到固定位置，不要放在微信临时目录。</li>
             </ol>
@@ -518,7 +518,7 @@
               <li>找到要识别的那条录音，先点播放。</li>
               <li>打开“大宜宾录音助手”，点“监听”。</li>
               <li>点“识别当前页录音”。</li>
-              <li>如果出现候选录音，填标题、选处理方式，再点“生成纪要”。</li>
+              <li>如果出现候选录音，填标题、选处理方式，再点“生成纪要”或“生成跟单”。</li>
             </ol>
           </div>
           <figure class="wide">
@@ -532,7 +532,9 @@
             <ul>
               <li>标记“当前录音”的通常就是最可能的一条。</li>
               <li>标题可以改成人能看懂的名字。</li>
-              <li>点“生成纪要”后，去详情页等待转写和总结完成。</li>
+              <li>如果选的是“跟单信息”，先选择跟单类型，再在候选卡片里填写用户 ID。</li>
+              <li>点“生成跟单”后可继续下一通电话，后台会继续转写和生成跟单。</li>
+              <li>如果选的是“会议纪要”，点“生成纪要”后进入详情页等待结果。</li>
               <li>如果提示“需手动上传”，说明网页不允许直接读取，下载录音文件后改用上传。</li>
             </ul>
           </div>
@@ -557,6 +559,7 @@
             <ol>
               <li>点“历史”。</li>
               <li>找到录音标题，右侧显示“完成”说明可以看结果。</li>
+              <li>搜索框可以输入用户 ID、录音标题、跟单关键词、会议纪要关键词或逐字稿关键词。</li>
               <li>点那条记录进入详情页。</li>
               <li>如果仍是“转写中/总结中”，点“刷新”或稍后再看。</li>
             </ol>
@@ -570,16 +573,20 @@
         <div class="divider"></div>
         <div class="mini-grid">
           <div class="mini-card">
-            <strong>总结</strong>
-            <p>适合直接复制到飞书、微信或文档。觉得结果不对，可以点“重新生成”。</p>
+            <strong>会议概览</strong>
+            <p>会议纪要记录默认打开这里，只放会议总结、要点、待办和风险。</p>
           </div>
           <div class="mini-card">
             <strong>逐字稿</strong>
-            <p>完整文字记录，带时间点和说话人。可搜索关键词，也可以重新转写。</p>
+            <p>完整文字记录，带时间点和说话人。历史搜索框也能按逐字稿关键词找到录音。</p>
           </div>
           <div class="mini-card">
-            <strong>跟单/备注</strong>
-            <p>客户沟通类录音会生成跟单字段。打完电话后可以手动填用户 ID，保存后历史页可直接搜索。</p>
+            <strong>跟单信息</strong>
+            <p>跟单记录默认打开这里，显示用户 ID、跟单类型、阶段、标签和字段化跟单内容。</p>
+          </div>
+          <div class="mini-card">
+            <strong>备注</strong>
+            <p>只写人工补充说明，不再混放 AI 生成的跟单结果。</p>
           </div>
           <div class="mini-card">
             <strong>下载</strong>
@@ -592,7 +599,7 @@
           <div class="guide-grid wide-shot">
             <div class="text-block">
               <ol>
-                <li>进入详情后，默认先看“会议概览/总结”。</li>
+                <li>会议纪要记录进入详情后，默认先看“会议概览”。</li>
                 <li>可以点“复制”，把总结粘贴到飞书。</li>
                 <li>如果总结不完整，点“重新生成”。</li>
               </ol>
@@ -623,15 +630,16 @@
         </details>
 
         <details class="subdetails">
-          <summary>展开看“跟单/备注/导出”截图和步骤</summary>
+          <summary>展开看“跟单信息/备注/导出”截图和步骤</summary>
           <div class="guide-grid wide-shot">
             <div class="text-block">
-              <h3>跟单</h3>
+              <h3>跟单信息</h3>
               <ul>
-                <li>点“跟单/备注”。</li>
-                <li>填写用户 ID，检查阶段、标签、企业/客户、状态和跟单内容。</li>
+                <li>跟单记录打开后默认进入“跟单信息”。</li>
+                <li>用户 ID 会优先来自监听候选卡片，也可以在这里补改。</li>
+                <li>检查阶段、标签、企业/客户、状态和跟单内容。</li>
                 <li>有需要就修改，最后点“保存跟单修改”。</li>
-                <li>回到“历史”后，可在搜索框输入用户 ID 找回录音和跟单。</li>
+                <li>回到“历史”后，可在搜索框输入用户 ID、跟单正文或跟单字段关键词找回录音。</li>
               </ul>
             </div>
             <figure class="wide">
