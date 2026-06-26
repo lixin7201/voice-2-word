@@ -830,6 +830,7 @@ test('detail page renders horizontal tabs and keeps panel state', () => {
   assert.match(html, /思维导图/);
   assert.match(html, /id="summary-section"/);
   assert.match(html, /data-action="open-share-panel"/);
+  assert.match(html, /aria-expanded="false"/);
   assert.doesNotMatch(html, /<audio id="record-audio"/);
 
   api.appState.sharePanelOpen = true;
@@ -843,6 +844,8 @@ test('detail page renders horizontal tabs and keeps panel state', () => {
     accessCount: 2,
   }];
   const shareHtml = api.renderDetail();
+  assert.match(shareHtml, /class="share-popover-wrap"/);
+  assert.match(shareHtml, /aria-expanded="true"/);
   assert.match(shareHtml, /分享链接/);
   assert.match(shareHtml, /name="includeAudio" type="checkbox" checked/);
   assert.match(shareHtml, /name="includeTranscript" type="checkbox" checked/);

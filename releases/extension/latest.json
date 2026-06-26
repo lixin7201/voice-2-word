@@ -1,12 +1,12 @@
 {
   "name": "大宜宾录音助手",
-  "version": "0.1.6",
-  "minSupportedVersion": "0.1.6",
-  "releasedAt": "2026-06-26T02:47:35.492Z",
+  "version": "0.1.7",
+  "minSupportedVersion": "0.1.7",
+  "releasedAt": "2026-06-26T03:12:30.675Z",
   "changelog": [
-    "修复点击分享后等待接口导致看起来无反应",
-    "分享面板现在会立即打开并显示加载状态"
+    "分享选择框改为按钮旁弹出式布局",
+    "点击分享后立即显示录音、逐字稿、总结勾选项"
   ],
-  "downloadUrl": "http://lixindemac-studio.local:8127/releases/extension/voice-to-word-extension-0.1.6.zip",
-  "sha256": "c2034edb6e0d984fab76a848c5218353e41be8bdfb6e773b6c0d30eb5717e49d"
+  "downloadUrl": "http://lixindemac-studio.local:8127/releases/extension/voice-to-word-extension-0.1.7.zip",
+  "sha256": "767693d6b6082a40b1708f117fb7b4fa44d4429dba936c60bbf5f52394df6de0"
 }

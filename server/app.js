@@ -72,6 +72,7 @@ const WEB_ASSETS = new Map([
   ['/install-assets/followup.png', { file: 'install-assets/followup.png', contentType: 'image/png' }],
   ['/install-assets/notes.png', { file: 'install-assets/notes.png', contentType: 'image/png' }],
   ['/install-assets/export.png', { file: 'install-assets/export.png', contentType: 'image/png' }],
+  ['/install-assets/share-popover.png', { file: 'install-assets/share-popover.png', contentType: 'image/png' }],
   ['/install-assets/profile.png', { file: 'install-assets/profile.png', contentType: 'image/png' }],
   ['/webapp.html', { file: 'webapp.html', contentType: 'text/html; charset=utf-8' }],
   ['/webapp.css', { file: 'webapp.css', contentType: 'text/css; charset=utf-8' }],

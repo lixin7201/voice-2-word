@@ -2367,6 +2367,35 @@ textarea:focus {
   background: #f8fbff;
 }
 
+.share-popover-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: flex-start;
+}
+
+.share-popover-wrap .share-panel {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 10px);
+  z-index: 40;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  margin-top: 0;
+  box-shadow: 0 18px 44px rgba(12, 34, 51, 0.18);
+}
+
+.share-popover-wrap .item-title {
+  margin-bottom: 10px;
+}
+
+.share-popover-wrap .item-title h3 {
+  font-size: 16px;
+}
+
+.share-popover-wrap .btn {
+  white-space: nowrap;
+}
+
 .share-form {
   display: grid;
   gap: 10px;
@@ -2396,10 +2425,28 @@ textarea:focus {
   height: 18px;
 }
 
+.share-popover-wrap .share-option {
+  min-height: 36px;
+  padding: 7px 10px;
+}
+
+.share-popover-wrap .compact-field {
+  margin-top: 0;
+}
+
+.share-popover-wrap .hint {
+  font-size: 12px;
+}
+
 .share-link-list {
   display: grid;
   gap: 10px;
   margin-top: 12px;
+}
+
+.share-popover-wrap .share-link-list {
+  max-height: 180px;
+  overflow: auto;
 }
 
 .share-link-row {
@@ -2411,6 +2458,10 @@ textarea:focus {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
+}
+
+.share-popover-wrap .share-link-row {
+  grid-template-columns: 1fr;
 }
 
 .share-link-row.disabled {
@@ -2429,6 +2480,10 @@ textarea:focus {
   flex-wrap: wrap;
   gap: 8px;
   justify-content: flex-end;
+}
+
+.share-popover-wrap .share-link-actions {
+  justify-content: flex-start;
 }
 
 .hidden {
@@ -2477,6 +2532,14 @@ textarea:focus {
   .download-select,
   .share-link-row {
     grid-template-columns: 1fr;
+  }
+
+  .share-popover-wrap .share-panel {
+    top: calc(100% + 8px);
+    left: 0;
+    width: min(320px, calc(100vw - 48px));
+    max-height: calc(100vh - 160px);
+    overflow: auto;
   }
 
   .upload-orb,

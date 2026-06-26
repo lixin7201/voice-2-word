@@ -859,15 +859,17 @@ function renderDetail() {
         ${renderTitleEditor(record)}
         <div class="meta">${escapeHtml(record.owner?.displayName || '')} · ${escapeHtml(record.department?.name || '')} · ${formatDate(record.createdAt)}</div>
         <div class="btn-row">
+          <span class="share-popover-wrap">
+            <button class="btn" type="button" data-action="open-share-panel" aria-expanded="${appState.sharePanelOpen ? 'true' : 'false'}">分享</button>
+            ${appState.sharePanelOpen ? renderSharePanel(record) : ''}
+          </span>
           <span class="badge ${escapeHtml(record.status)}">${statusLabel(record.status)}</span>
           <span class="badge">${escapeHtml(templateLabel(record.templateType))}</span>
           <span class="badge">${escapeHtml(followupLabel(record.followupType || 'none'))}</span>
           <span class="badge">${escapeHtml(titleSourceLabel(record.titleSource))}</span>
-          <button class="btn" type="button" data-action="open-share-panel">分享</button>
         </div>
         ${renderRecordProgress(record)}
         ${record.errorMessage ? `<div class="status error">${escapeHtml(record.errorMessage)}</div>` : ''}
-        ${appState.sharePanelOpen ? renderSharePanel(record) : ''}
       </section>
       <section class="glass section detail-workspace">
         ${renderDetailTabs(record)}

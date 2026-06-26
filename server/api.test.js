@@ -580,6 +580,7 @@ test('web root serves login workbench without weakening API auth', async () => {
     assert.match(installHtml, /加载已解压的扩展程序/);
     assert.match(installHtml, /监听网页录音/);
     assert.match(installHtml, /分享链接/);
+    assert.match(installHtml, /install-assets\/share-popover\.png/);
 
     const installAsset = await fetch(`${baseUrl}/install-assets/dashboard.png`, { method: 'HEAD' });
     assert.equal(installAsset.status, 200);
@@ -588,6 +589,10 @@ test('web root serves login workbench without weakening API auth', async () => {
     const captureAsset = await fetch(`${baseUrl}/install-assets/capture-guide.png`, { method: 'HEAD' });
     assert.equal(captureAsset.status, 200);
     assert.match(captureAsset.headers.get('content-type') || '', /image\/png/);
+
+    const shareAsset = await fetch(`${baseUrl}/install-assets/share-popover.png`, { method: 'HEAD' });
+    assert.equal(shareAsset.status, 200);
+    assert.match(shareAsset.headers.get('content-type') || '', /image\/png/);
 
     const extensionZip = await fetch(`${baseUrl}/releases/extension/voice-to-word-extension-0.1.3.zip`, { method: 'HEAD' });
     assert.equal(extensionZip.status, 200);
