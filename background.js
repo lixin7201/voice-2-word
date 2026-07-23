@@ -197,11 +197,7 @@ function setupTabLifecycleListeners() {
   });
   chromeApi.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (changeInfo.status !== 'loading') return;
-    tabNetworkCandidates.delete(tabId);
-    if (listeningTabId === tabId) {
-      clearListeningSession();
-      globalState = { ...globalState, candidates: [] };
-    }
+    handleListeningTabLoading(tabId);
   });
 }
 
@@ -221,21 +217,7 @@ function scanActiveTab(action = 'scan') {
 }
 
 function scanTab(tab, action = 'scan') {
-  listeningTabId = tab.id;
-  listeningTabInfo = { title: tab.title || '', url: tab.url || '' };
-  listeningStartedAt = Date.now();
-  lastScanAction = action;
-  lastContentScriptError = '';
-  tabNetworkCandidates.set(tab.id, []);
-  dispatchStateChange({
-    phase: 'extracting',
-    statusText: '正在监听当前网页。请点击网页上的播放按钮，插件会自动收集候选录音。',
-    url: null,
-    candidates: [],
-    transcript: '',
-    summary: '',
-    error: '',
-  });
+  dispatchStateChange(startListeningSession(tab, action));
 
   chromeApi.scripting.executeScript(
     {
@@ -255,6 +237,33 @@ function scanTab(tab, action = 'scan') {
       collectCandidatesFromTab(tab);
     }
   );
+}
+
+function startListeningSession(tab, action = 'scan') {
+  listeningTabId = tab.id;
+  listeningTabInfo = { title: tab.title || '', url: tab.url || '' };
+  listeningStartedAt = Date.now();
+  lastScanAction = action;
+  lastContentScriptError = '';
+  tabNetworkCandidates.set(tab.id, []);
+  const nextState = {
+    phase: 'extracting',
+    statusText: '正在监听当前网页。请点击网页上的播放按钮，插件会自动收集候选录音。',
+    url: null,
+    candidates: [],
+    transcript: '',
+    summary: '',
+    error: '',
+  };
+  globalState = { ...globalState, ...nextState };
+  return nextState;
+}
+
+function handleListeningTabLoading(tabId) {
+  tabNetworkCandidates.delete(tabId);
+  if (listeningTabId === tabId) {
+    globalState = { ...globalState, candidates: [] };
+  }
 }
 
 function collectCandidatesFromTab(tab) {
@@ -1108,7 +1117,9 @@ if (typeof module !== 'undefined' && module.exports) {
     isVolatileQueryParam,
     mergeCandidates,
     resetListeningState,
+    handleListeningTabLoading,
     sizeFromResponseHeaders,
+    startListeningSession,
     stripQuery,
     totalSizeFromContentRange,
   };

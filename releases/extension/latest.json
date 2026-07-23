@@ -1,14 +1,13 @@
 {
   "name": "大宜宾录音助手",
-  "version": "0.1.9",
-  "minSupportedVersion": "0.1.9",
-  "releasedAt": "2026-06-26T06:20:18.743Z",
+  "version": "0.1.11",
+  "minSupportedVersion": "0.1.11",
+  "releasedAt": "2026-06-26T06:56:25.315Z",
   "changelog": [
-    "跟单模式下监听候选录音先填写用户 ID，提交后可继续下一通电话",
-    "用户 ID 自动回显到跟单信息页、编辑框和复制内容",
-    "历史页一个搜索框同时支持用户 ID、跟单关键词、会议纪要和逐字稿关键词",
-    "跟单结果独立显示在“跟单信息”，备注页只保留人工补充"
+    "修复 Plaud 播放时标签页 loading 导致监听会话丢失的问题",
+    "监听诊断里已抓到 S3 音频请求时，候选会继续归到当前页面",
+    "保留 0.1.10 的中文搜索输入法修复"
   ],
-  "downloadUrl": "http://lixindemac-studio.local:8127/releases/extension/voice-to-word-extension-0.1.9.zip",
-  "sha256": "1c195680139de0707131dc9b81ea4c20bcbe305025ce6562644f0c81a018b96e"
+  "downloadUrl": "http://lixindemac-studio.local:8127/releases/extension/voice-to-word-extension-0.1.11.zip",
+  "sha256": "4334382c50b3406b29a4f706d1c2d70f904fac80f5c23aa80fccceea842e4ac5"
 }

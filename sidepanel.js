@@ -2788,14 +2788,27 @@ function bindCurrentView() {
   });
 
   const historySearch = document.getElementById('history-search');
-  if (historySearch) historySearch.addEventListener('input', (event) => {
-    const value = event.currentTarget.value;
-    appState.historyQuery = value;
-    render();
-    const nextInput = document.getElementById('history-search');
-    nextInput?.focus?.();
-    nextInput?.setSelectionRange?.(value.length, value.length);
-  });
+  if (historySearch) {
+    let historySearchComposing = false;
+    const applyHistorySearch = (value) => {
+      appState.historyQuery = value;
+      render();
+      const nextInput = document.getElementById('history-search');
+      nextInput?.focus?.();
+      nextInput?.setSelectionRange?.(value.length, value.length);
+    };
+    historySearch.addEventListener('compositionstart', () => {
+      historySearchComposing = true;
+    });
+    historySearch.addEventListener('compositionend', (event) => {
+      historySearchComposing = false;
+      applyHistorySearch(event.currentTarget.value);
+    });
+    historySearch.addEventListener('input', (event) => {
+      if (historySearchComposing || event.isComposing) return;
+      applyHistorySearch(event.currentTarget.value);
+    });
+  }
 
   onClick('button[data-action="archive-record"]', (_event, button) => deleteRecord(button.dataset.id, 'archive'));
   onClick('button[data-action="purge-record"]', (_event, button) => deleteRecord(button.dataset.id, 'purge'));
@@ -2874,11 +2887,25 @@ function bindCurrentView() {
   onClick('button[data-action="revoke-share-link"]', (_event, button) => revokeShareLink(button.dataset.id || ''));
 
   const transcriptSearch = document.getElementById('transcript-search');
-  if (transcriptSearch) transcriptSearch.addEventListener('input', (event) => {
-    appState.transcriptQuery = event.currentTarget.value;
-    appState.transcriptVisibleCount = TRANSCRIPT_RENDER_BATCH;
-    render();
-  });
+  if (transcriptSearch) {
+    let transcriptSearchComposing = false;
+    const applyTranscriptSearch = (value) => {
+      appState.transcriptQuery = value;
+      appState.transcriptVisibleCount = TRANSCRIPT_RENDER_BATCH;
+      render();
+    };
+    transcriptSearch.addEventListener('compositionstart', () => {
+      transcriptSearchComposing = true;
+    });
+    transcriptSearch.addEventListener('compositionend', (event) => {
+      transcriptSearchComposing = false;
+      applyTranscriptSearch(event.currentTarget.value);
+    });
+    transcriptSearch.addEventListener('input', (event) => {
+      if (transcriptSearchComposing || event.isComposing) return;
+      applyTranscriptSearch(event.currentTarget.value);
+    });
+  }
 
   const audio = document.getElementById('record-audio');
   if (audio) audio.addEventListener('timeupdate', () => {

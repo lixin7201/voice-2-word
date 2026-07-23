@@ -394,13 +394,14 @@ function matchesSimpleSelector(node, selector) {
   });
 }
 
-async function dispatchBubblingEvent(target, type) {
+async function dispatchBubblingEvent(target, type, extra = {}) {
   const event = {
     type,
     target,
     currentTarget: target,
     defaultPrevented: false,
     stopped: false,
+    ...extra,
     preventDefault() {
       this.defaultPrevented = true;
     },
@@ -817,6 +818,42 @@ test('admin history defaults to employee groups with collapsible record lists', 
   assert.match(filteredHtml, /用户 ID：DYC-1001/);
   assert.match(filteredHtml, /data-expanded="1"/);
   assert.doesNotMatch(filteredHtml, /泡泡录音/);
+});
+
+test('history search waits for Chinese IME composition before rerendering', async () => {
+  const dom = createTestDom();
+  const { api } = loadSidepanel({ dom });
+  api.appState.view = 'history';
+  api.appState.currentUser = { id: 'emp-1', displayName: '岚岚', globalRole: 'admin', departments: [] };
+  api.appState.records = [{
+    id: 'rec-ime',
+    title: '客户沟通录音',
+    status: 'completed',
+    createdAt: '2026-06-26T01:00:00.000Z',
+    owner: { id: 'emp-1', displayName: '岚岚' },
+    department: { id: 'dep-rec', name: '招聘部' },
+    templateType: 'meeting_minutes',
+    followupType: 'none',
+    titleSource: 'manual',
+  }];
+
+  api.render();
+  const search = dom.document.getElementById('history-search');
+  const renderCountBeforeInput = dom.document.renderCount;
+
+  await dispatchBubblingEvent(search, 'compositionstart');
+  search.value = 'ke';
+  await dispatchBubblingEvent(search, 'input', { isComposing: true });
+
+  assert.equal(api.appState.historyQuery, '');
+  assert.equal(dom.document.renderCount, renderCountBeforeInput);
+
+  search.value = '客户';
+  await dispatchBubblingEvent(search, 'compositionend');
+
+  assert.equal(api.appState.historyQuery, '客户');
+  assert.ok(dom.document.renderCount > renderCountBeforeInput);
+  assert.equal(dom.document.activeElement.id, 'history-search');
 });
 
 test('detail page renders horizontal tabs and keeps panel state', () => {

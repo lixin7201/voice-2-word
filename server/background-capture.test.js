@@ -4,11 +4,13 @@ const {
   candidateKey,
   candidateFromUrl,
   getDiagnostics,
+  handleListeningTabLoading,
   headerValue,
   isVolatileQueryParam,
   mergeCandidates,
   resetListeningState,
   sizeFromResponseHeaders,
+  startListeningSession,
   stripQuery,
   totalSizeFromContentRange,
 } = require('../background');
@@ -207,4 +209,20 @@ test('resetting the listener clears candidate diagnostics', () => {
   assert.equal(diagnostics.globalStatePhase, 'idle');
   assert.equal(diagnostics.candidatesCount, 0);
   assert.equal(diagnostics.lastCandidateAt, '');
+});
+
+test('tab loading keeps the active listening session attached to the tab', () => {
+  resetListeningState();
+  startListeningSession({
+    id: 1718,
+    url: 'https://web.plaud.cn/file/1718d988b16416934527e13c40ca688e',
+    title: 'Plaud 网页端',
+  }, 'reset');
+
+  handleListeningTabLoading(1718);
+  const diagnostics = getDiagnostics();
+
+  assert.equal(diagnostics.listeningTabId, 1718);
+  assert.equal(diagnostics.listeningTabUrl, 'https://web.plaud.cn/file/1718d988b16416934527e13c40ca688e');
+  assert.equal(diagnostics.globalStatePhase, 'extracting');
 });
