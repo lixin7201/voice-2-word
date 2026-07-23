@@ -7,6 +7,7 @@ const { normalizeMindMap } = require('./mind-map');
 const { isSummaryUsable } = require('./summary-quality');
 
 const CHROME_PATH = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const EXPORT_FONT_FAMILY = '"Hiragino Sans GB","PingFang SC","STHeiti","Microsoft YaHei","Noto Sans CJK SC",sans-serif';
 
 function buildExportText(record, store, target = 'full_record', markdown = true) {
   const summary = store.table('summaries').find((item) => item.audio_record_id === record.id);
@@ -167,7 +168,7 @@ function buildSummaryExportHtml(record, store) {
   <meta charset="utf-8">
   <title>${escapeHtml(record.title || '录音总结')}</title>
   <style>
-    *{box-sizing:border-box}body{margin:0;padding:32px;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:#10232d;background:#f6fafb;letter-spacing:0}.page{max-width:920px;margin:0 auto;display:grid;gap:22px}.cover,.section{background:#fff;border:1px solid #d9e7eb;border-radius:10px;padding:22px;break-inside:avoid}.cover{background:linear-gradient(135deg,#e9f7f6,#eef6ff)}h1,h2,h3,p{margin-top:0}h1{font-size:30px;margin-bottom:12px}h2{font-size:20px;margin-bottom:14px}.meta-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.meta-grid div{padding:10px;border-radius:8px;background:rgba(255,255,255,.72)}.meta-grid span{display:block;color:#62727c;font-size:12px}.meta-grid strong{font-size:15px}.card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #d7e5e9;border-radius:10px;background:#fbfefd}.summary-card.feature{grid-column:1/-1}.summary-card h3{font-size:17px;margin-bottom:8px}.summary-card ul,.markdown ul{padding-left:20px}.summary-card li,.markdown li{margin:5px 0}.markdown{line-height:1.72}.markdown h1{font-size:23px}.markdown h2{font-size:18px;border-bottom:1px solid #d9e7eb;padding-bottom:6px}.mind-map{display:grid;gap:14px}.mind-map-center{padding:18px;border-radius:14px;background:#e9f7f6;border:1px solid #b7d8d5;text-align:center}.mind-map-center small{display:block;color:#62727c;margin-bottom:4px}.mind-map-center strong{font-size:20px}.mind-map-branches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.mind-map-branch{padding:14px;border:1px solid #d7e5e9;border-radius:10px;background:#fff}.mind-map-branch h3{font-size:16px;margin-bottom:6px}.mind-map-branch p{color:#45616c}.mind-map-branch li{margin:6px 0}.followup{background:#fffaf0}@media print{body{background:#fff;padding:0}.page{max-width:none}.cover,.section{box-shadow:none;break-inside:avoid}.section{page-break-inside:avoid}}
+    *{box-sizing:border-box}body{margin:0;padding:32px;font-family:${EXPORT_FONT_FAMILY};color:#10232d;background:#f6fafb;letter-spacing:0}.page{max-width:920px;margin:0 auto;display:grid;gap:22px}.cover,.section{background:#fff;border:1px solid #d9e7eb;border-radius:10px;padding:22px;break-inside:avoid}.cover{background:linear-gradient(135deg,#e9f7f6,#eef6ff)}h1,h2,h3,p{margin-top:0}h1{font-size:30px;margin-bottom:12px}h2{font-size:20px;margin-bottom:14px}.meta-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.meta-grid div{padding:10px;border-radius:8px;background:rgba(255,255,255,.72)}.meta-grid span{display:block;color:#62727c;font-size:12px}.meta-grid strong{font-size:15px}.card-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.summary-card{padding:14px;border:1px solid #d7e5e9;border-radius:10px;background:#fbfefd}.summary-card.feature{grid-column:1/-1}.summary-card h3{font-size:17px;margin-bottom:8px}.summary-card ul,.markdown ul{padding-left:20px}.summary-card li,.markdown li{margin:5px 0}.markdown{line-height:1.72}.markdown h1{font-size:23px}.markdown h2{font-size:18px;border-bottom:1px solid #d9e7eb;padding-bottom:6px}.mind-map{display:grid;gap:14px}.mind-map-center{padding:18px;border-radius:14px;background:#e9f7f6;border:1px solid #b7d8d5;text-align:center}.mind-map-center small{display:block;color:#62727c;margin-bottom:4px}.mind-map-center strong{font-size:20px}.mind-map-branches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.mind-map-branch{padding:14px;border:1px solid #d7e5e9;border-radius:10px;background:#fff}.mind-map-branch h3{font-size:16px;margin-bottom:6px}.mind-map-branch p{color:#45616c}.mind-map-branch li{margin:6px 0}.followup{background:#fffaf0}@page{size:A4;margin:14mm}@media print{body{background:#fff;padding:0}.page{max-width:none}.cover,.section{box-shadow:none;break-inside:avoid}.section{page-break-inside:avoid}}
   </style>
 </head>
 <body>
@@ -299,6 +300,7 @@ function writeHtmlPdf(html) {
       '--disable-gpu',
       '--no-sandbox',
       '--run-all-compositor-stages-before-draw',
+      '--no-pdf-header-footer',
       `--print-to-pdf=${pdfPath}`,
       `file://${htmlPath}`,
     ], { timeout: 30000, stdio: 'ignore' });
@@ -605,6 +607,28 @@ function paragraph(text, bold = false) {
 }
 
 function createPdfBuffer(title, text) {
+  const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>${escapeHtml(title || '录音记录')}</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;font-family:${EXPORT_FONT_FAMILY};color:#10232d;line-height:1.72}h1{font-size:26px;margin:0 0 22px}.content{font-size:14px;white-space:pre-wrap;overflow-wrap:anywhere}@page{size:A4;margin:16mm}
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(title || '录音记录')}</h1>
+  <div class="content">${escapeHtml(stripMarkdown(text || ''))}</div>
+</body>
+</html>`;
+  try {
+    return writeHtmlPdf(html);
+  } catch {
+    return createRawPdfBuffer(title, text);
+  }
+}
+
+function createRawPdfBuffer(title, text) {
   const lines = [title, '', ...stripMarkdown(text).split(/\n+/)].flatMap((line) => wrapLine(line, 32));
   const pages = [];
   for (let index = 0; index < lines.length; index += 34) pages.push(lines.slice(index, index + 34));

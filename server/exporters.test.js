@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildExportSvg, buildExportText, buildSummaryExportHtml, createSummaryDocxBuffer, createSummaryPdfBuffer } = require('./lib/exporters');
+const childProcess = require('node:child_process');
+const { buildExportSvg, buildExportText, buildSummaryExportHtml, createPdfBuffer, createSummaryDocxBuffer, createSummaryPdfBuffer } = require('./lib/exporters');
 
 function fakeStore(tables) {
   return {
@@ -156,6 +157,81 @@ test('summary docx and pdf combine visual card, text summary, and mind map', () 
   const pdf = createSummaryPdfBuffer(record, store, markdown);
   assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
   assert.ok(pdf.byteLength > 1000);
+});
+
+test('summary pdf preserves the same Chinese content shown in the web summary', () => {
+  const record = {
+    id: 'record-chinese-pdf',
+    owner_employee_id: 'employee-1',
+    owner_department_id: 'department-1',
+    title: 'Export Test',
+    created_at: '2026-07-23T03:43:09.115Z',
+    source_type: 'manual_upload',
+    template_type: 'meeting_minutes',
+    followup_type: 'none',
+  };
+  const store = fakeStore({
+    employees: [{ id: 'employee-1', display_name: '正文员工离心' }],
+    departments: [{ id: 'department-1', name: '中文运营部门' }],
+    summaries: [{
+      audio_record_id: 'record-chinese-pdf',
+      summary_markdown: '# 文字纪要\n- 中文纪要完整保留',
+      overview_card_json: {
+        heroTitle: '中文总结卡片',
+        cards: [{ title: '关键结论', items: ['下载内容与网页一致'] }],
+      },
+      mind_map_json: {
+        title: '中文思维导图',
+        center: '录音总结',
+        branches: [{ title: '导出', children: [{ title: '中文不乱码' }] }],
+      },
+    }],
+    transcripts: [],
+    followup_forms: [],
+  });
+
+  const markdown = buildExportText(record, store, 'summary', true);
+  const html = buildSummaryExportHtml(record, store);
+  const docx = createSummaryDocxBuffer(record, store, markdown);
+  const pdf = createSummaryPdfBuffer(record, store, markdown);
+  const extracted = childProcess.spawnSync('pdftotext', ['-layout', '-', '-'], {
+    input: pdf,
+    encoding: 'utf8',
+  });
+  const expectedContent = [
+    '正文员工离心',
+    '中文运营部门',
+    '中文总结卡片',
+    '中文纪要完整保留',
+    '中文思维导图',
+  ];
+
+  assert.equal(extracted.status, 0, extracted.stderr);
+  for (const content of expectedContent) {
+    assert.ok(markdown.includes(content), `Markdown 缺少：${content}`);
+    assert.ok(html.includes(content), `网页导出视图缺少：${content}`);
+    assert.ok(docx.includes(Buffer.from(content)), `DOCX 缺少：${content}`);
+    assert.ok(extracted.stdout.includes(content), `PDF 缺少：${content}`);
+  }
+  assert.doesNotMatch(extracted.stdout, /voice-summary-pdf-/);
+});
+
+test('other pdf downloads embed portable Chinese fonts', () => {
+  const pdf = createPdfBuffer('Export Test', '员工：加菲\n部门：运营部\n中文下载内容与网页一致');
+  const extracted = childProcess.spawnSync('pdftotext', ['-layout', '-', '-'], {
+    input: pdf,
+    encoding: 'utf8',
+  });
+  const fonts = childProcess.spawnSync('pdffonts', ['-'], {
+    input: pdf,
+    encoding: 'utf8',
+  });
+
+  assert.equal(extracted.status, 0, extracted.stderr);
+  assert.equal(fonts.status, 0, fonts.stderr);
+  assert.match(extracted.stdout, /员工：加菲/);
+  assert.match(extracted.stdout, /中文下载内容与网页一致/);
+  assert.match(fonts.stdout, /\byes\s+yes\s+yes\b/);
 });
 
 test('legacy topic children mind map exports without regeneration', () => {
