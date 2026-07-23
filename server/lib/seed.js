@@ -63,7 +63,7 @@ const MEMBERSHIP = {
   '管理层/待分配': ['练团长', '王哥', '雯雯', '小绵羊', '七七'],
   '运营部': ['加菲', '流浪', '小美', '小康', '泡泡', '甘甘', '小琳', '南风', '离心', '小田', '有缘'],
   '财务部': ['Cherry', '芳芳', '莎莎', '三土'],
-  '红娘部门': ['Coco', '可可', '郭郭', '安安', '燕妮', '蓝玲', '阿贝', '半夏', '小乔', '猫饼', '妮娜', '三毛', '悠悠', '小严', '小文'],
+  '红娘部门': ['Coco', '可可', '郭郭', '安安', '燕妮', '蓝玲', '半夏', '小乔', '猫饼', '妮娜', '三毛', '悠悠', '小严', '小文'],
   '招聘部': ['岚岚', '阿馨', '清英', '凌予', '云菲', '清风', '阿文', '毛毛', '周周'],
 };
 
@@ -111,6 +111,7 @@ function createInitialData(now = new Date().toISOString()) {
   employeeDepartments.push(memberRow(employeeByName.get('代姐').id, departmentByName.get('招聘部').id, 'lead', now));
   employeeDepartments.push(memberRow(employeeByName.get('二毛').id, departmentByName.get('运营部').id, 'lead', now));
   employeeDepartments.push(memberRow(employeeByName.get('二毛').id, departmentByName.get('红娘部门').id, 'lead', now));
+  employeeDepartments.push(memberRow(employeeByName.get('阿贝').id, departmentByName.get('红娘部门').id, 'lead', now));
 
   return {
     departments: departmentRows,
@@ -142,7 +143,7 @@ function createInitialData(now = new Date().toISOString()) {
 function globalRoleFor(name) {
   if (name === '离心') return 'admin';
   if (name === '练团长') return 'boss';
-  if (name === '代姐' || name === '二毛') return 'department_lead';
+  if (name === '代姐' || name === '二毛' || name === '阿贝') return 'department_lead';
   return 'employee';
 }
 
